@@ -259,6 +259,21 @@ class Kex(args: Array<String>) {
         DescriptorStatistics.printStatistics()
     }
 
+    /*changes begin here
+
+    private fun cgs(originalContext: ExecutionContext, analysisContext: ExecutionContext) {
+        val traceManager = ObjectTraceManager()
+        val cm = CoverageCounter(originalContext.cm, traceManager)
+        val psa = PredicateStateAnalysis(analysisContext.cm)
+
+    }
+
+
+
+
+
+    //changes end here*/
+
     private fun runPipeline(context: ExecutionContext, target: Package, init: Pipeline.() -> Unit) =
             executePipeline(context.cm, target, init)
 
