@@ -7,6 +7,8 @@ import java.nio.file.StandardOpenOption
 import java.time.Duration
 import java.time.temporal.ChronoUnit
 
+//By AndreyBychkov https://github.com/AndreyBychkov
+
 data class Statistics(val algorithm: String,
                       val methodName: String,
                       var iterations: Int,

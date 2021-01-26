@@ -33,6 +33,11 @@ import org.jetbrains.research.kfg.visitor.MethodVisitor
 import java.time.Duration
 import java.time.temporal.ChronoUnit
 import java.util.*
+import kotlin.NoSuchElementException
+
+
+
+//Added CGS by AndreyBychkov https://github.com/AndreyBychkov
 
 private val timeLimit by lazy { kexConfig.getLongValue("concolic", "timeLimit", 10000L) }
 private val onlyMain by lazy { kexConfig.getBooleanValue("concolic", "main-only", false) }
@@ -133,8 +138,15 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
                     val prevBlock = prevBlockStack.pop()
                     val current = action.block
                     val next = filteredTrace.getOrNull(index + 1) as? BlockAction
-                    builder.build(current, prevBlock.block, next?.block)
-                    methodStack.pop()
+                    try {
+                        builder.build(current, prevBlock.block, next?.block)
+                        methodStack.pop()
+                    }
+                    catch (e: java.util.NoSuchElementException) {
+                        print(e.stackTrace)
+                        throw e
+                    }
+
                     builder.exitMethod(action.method)
                 }
                 is MethodCall -> {

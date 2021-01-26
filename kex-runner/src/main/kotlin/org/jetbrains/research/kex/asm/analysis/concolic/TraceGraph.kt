@@ -4,6 +4,9 @@ import com.abdullin.kthelper.collection.queueOf
 import com.abdullin.kthelper.collection.stackOf
 import org.jetbrains.research.kex.trace.`object`.*
 
+
+//CFG by AndreyBychkov https://github.com/AndreyBychkov
+
 open class TraceGraph(startTrace: Trace) {
 
     data class Vertex(val action: Action,
