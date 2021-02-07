@@ -6,12 +6,16 @@ import org.jetbrains.research.kex.trace.`object`.*
 
 
 //CFG by AndreyBychkov https://github.com/AndreyBychkov
+//plus my changes as WeightedTraceGraph
 
 open class TraceGraph(startTrace: Trace) {
 
     data class Vertex(val action: Action,
                       val predecessors: MutableCollection<Vertex>,
                       val successors: MutableCollection<Vertex>) {
+
+        val weights: MutableMap<Vertex, Int> = mutableMapOf()
+
         override fun hashCode(): Int {
             return action.hashCode()
         }
@@ -47,13 +51,13 @@ open class TraceGraph(startTrace: Trace) {
         return Branch(trace.actions)
     }
 
-    val vertices: MutableCollection<Vertex> = mutableSetOf()
+    open val vertices: MutableCollection<Vertex> = mutableSetOf()                                       //was not open
     val traces: MutableCollection<Trace> = mutableListOf()
     val rootToLeaf = mutableMapOf<Vertex, Vertex>()
     val leafToRoot
         get() = rootToLeaf.entries.associate { (k, v) -> v to k }
     var depth: Int = 0
-        private set
+        protected set                                                                                    //was private
 
     init {
         traces.add(startTrace)
@@ -113,19 +117,18 @@ open class TraceGraph(startTrace: Trace) {
         depth = maxOf(depth, trace.actions.size)
     }
 
-    private fun predecessorInSameMethod(vertex: Vertex): Boolean {
+    protected fun predecessorInSameMethod(vertex: Vertex): Boolean {
         if(vertex.action is MethodEntry)
             return false
         return true
     }
 
-    private fun wrapAndAddAction(action: Action, predecessor: Vertex?): Vertex {
+    protected open fun wrapAndAddAction(action: Action, predecessor: Vertex?): Vertex {
         val pred = listOfNotNull(predecessor).toMutableSet()
         val vert = Vertex(action, pred, mutableSetOf())
         vertices.add(vert)
         return vert
     }
-
 
     protected fun bfsApply(start: Vertex, func: (Vertex) -> Unit) {
         val queue = queueOf(start)
@@ -219,4 +222,115 @@ class DominatorTraceGraph(startTrace: Trace) : TraceGraph(startTrace) {
         super.addTrace(trace)
         update()
     }
+}
+
+class WeightedTraceGraph(startTrace: Trace): TraceGraph(startTrace) {
+
+    private val uncoveredDistance = mutableMapOf<Vertex, Int>()
+
+    init {
+        this.traces.add(startTrace)
+        val actionTail = startTrace.actions
+        val root = Vertex(actionTail[0], mutableSetOf(), mutableSetOf())
+        this.vertices.add(root)
+
+        for (action in actionTail.drop(1)) {
+            val currPred = vertices.last()
+            //TODO("Add weights init")
+
+            val currVertex = Vertex(action, mutableSetOf(currPred), mutableSetOf())
+
+            if(currVertex.action is BlockBranch) {
+                addEdgeWithWeight(currPred, currVertex, 1)
+            }
+            else {
+                addEdgeWithWeight(currPred, currVertex, 0)
+            }
+
+            //addEdgeWithWeight(currPred, currVertex, 0)
+            //currPred.successors.add(currVertex)
+            vertices.add(currVertex)
+        }
+        rootToLeaf[root] = vertices.last()
+        depth = actionTail.size
+    }
+
+
+    //maybe I should change this later
+    private fun addEdgeWithWeight(from: Vertex?, to: Vertex?, weight: Int): Boolean {
+        if ( from == null || to == null || weight<=-2  /*|| !from.successors.contains(to) */)
+            return false
+        from.weights[to] = weight
+        from.successors.add(to)
+        return true
+    }
+
+    override fun wrapAndAddAction(action: Action, predecessor: Vertex?): Vertex {
+        val pred = listOfNotNull(predecessor).toMutableSet()
+        val vert = Vertex(action, pred, mutableSetOf())
+
+        if(action is BlockBranch)
+            addEdgeWithWeight(predecessor, vert, 1)
+        else
+            addEdgeWithWeight(predecessor, vert, 0)
+
+        //addEdgeWithWeight(predecessor, vert, 0)
+        vertices.add(vert)
+        return vert
+    }
+
+
+    override fun addTrace(trace: Trace) {
+        traces.add(trace)
+        val methodStack = stackOf<MethodEntry>()
+        val foundVerticesStack = stackOf<MutableSet<Vertex>>()
+        var previousVertex: Vertex? = null
+        trace.actions.forEach { action ->
+            if (action is MethodEntry) {
+                methodStack.push(action)
+                foundVerticesStack.push(mutableSetOf())
+            }
+
+            val found = action.findExcept(foundVerticesStack.peek()) ?: wrapAndAddAction(action, previousVertex)  //may cause NullPointer
+            val sameMethod = predecessorInSameMethod(found)
+            // TODO:? Whats next?
+
+            //previousVertex?.successors?.add(found)
+
+            if(found.action is BlockBranch)
+                addEdgeWithWeight(previousVertex, found, 1)
+
+            else
+                addEdgeWithWeight(previousVertex, found, 0)
+
+            //addEdgeWithWeight(previousVertex, found, 0)
+
+            found.predecessors.addAll(vertices.filter { found in it.successors })
+            foundVerticesStack.peek().add(found)
+            previousVertex = found
+
+            if (action is MethodReturn && action.method == methodStack.peek().method) {
+                methodStack.pop()
+                foundVerticesStack.pop()
+            }
+        }
+        rootToLeaf[trace.actions.first().find()!!] = trace.actions.last().find()!!
+        depth = maxOf(depth, trace.actions.size)
+    }
+
+
+    fun recomputeUncoveredDistance() {
+        //TODO
+    }
+
+
+    /*
+    fun solveAlongPath(): Branch {              //(p: path (execution), p(i): (branch on p), S: (path along CFG) ) =
+                                                // = q: [p(0)..p(i-1) = q(..i-1)], [q(i..) matches S]
+
+    }
+
+
+    */
+
 }

@@ -249,7 +249,8 @@ class Kex(args: Array<String>) {
         val psa = PredicateStateAnalysis(analysisContext.cm)
 
         runPipeline(analysisContext) {
-            +ConcolicChecker(analysisContext, psa, traceManager)
+            //+ConcolicChecker(analysisContext, psa, traceManager)
+            +ConcolicChecker(analysisContext, traceManager)
             +cm
         }
 
