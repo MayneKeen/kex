@@ -5,6 +5,7 @@ import com.abdullin.kthelper.collection.stackOf
 import org.jetbrains.research.kex.trace.`object`.*
 
 
+
 //CFG by AndreyBychkov https://github.com/AndreyBychkov
 //plus my changes as WeightedTraceGraph
 
@@ -15,6 +16,12 @@ open class TraceGraph(startTrace: Trace) {
                       val successors: MutableCollection<Vertex>) {
 
         val weights: MutableMap<Vertex, Int> = mutableMapOf()
+        //val uncoveredDistance: MutableMap<Vertex, Int> = mutableMapOf()
+        var uncoveredDistance: Int = 0
+        var nearestCovered: Vertex? = null //?
+        var prev: Vertex? = null
+
+        var tries: Int? = 0
 
         override fun hashCode(): Int {
             return action.hashCode()
@@ -226,8 +233,6 @@ class DominatorTraceGraph(startTrace: Trace) : TraceGraph(startTrace) {
 
 class WeightedTraceGraph(startTrace: Trace): TraceGraph(startTrace) {
 
-    private val uncoveredDistance = mutableMapOf<Vertex, Int>()
-
     init {
         this.traces.add(startTrace)
         val actionTail = startTrace.actions
@@ -318,19 +323,140 @@ class WeightedTraceGraph(startTrace: Trace): TraceGraph(startTrace) {
         depth = maxOf(depth, trace.actions.size)
     }
 
-
     fun recomputeUncoveredDistance() {
-        //TODO
+        val uncoveredBranches: MutableSet<Vertex> = findUncoveredBranches()
+        for(vertex in uncoveredBranches){
+            val map = dijkstra(vertex)
+            var dist = Int.MAX_VALUE
+            var vert: Vertex? = null
+
+            for(key: Vertex in map.keys) {
+                if(uncoveredBranches.contains(key))
+                    continue
+
+                if(map[key]!! < dist) {
+                    dist = map[key]!!
+                    vert = key
+                }
+            }
+
+            if(vert != null) {
+                vertex.uncoveredDistance = dist
+                vertex.nearestCovered = vert
+            }
+
+        }
+        return
     }
+
+    private fun findUncoveredBranches(): MutableSet<Vertex> {
+        val result: MutableSet<Vertex> = mutableSetOf()
+
+        for(vertex in vertices) {
+            /*if(vertex.action !is BlockBranch)
+                continue
+              */
+            result.add(vertex)
+            traces.forEach {
+                if (it.contains(vertex))
+                    result.remove(vertex)
+            }
+        }
+        return result
+    }
+
+//runs dijkstra alg 4 a covered vertex (//BlockBranch)
+
+    fun dijkstra(v: Vertex): MutableMap<Vertex, Int> {
+        val q = mutableSetOf<Vertex>()
+        val map = mutableMapOf<Vertex, Int >()
+        //var prev: Vertex? = null
+        q.add(v)
+        v.uncoveredDistance = 0
+        map[v] = 0
+
+        for(vertex in vertices) {
+            if(vertex == v)
+                continue
+            q.add(vertex)
+            map[vertex] = Int.MAX_VALUE
+        }
+
+        var u:Vertex = v
+
+        while (q.isNotEmpty()) {
+            for(vertex in q){
+                if(map[vertex]!! < map[u]!!)
+                    u = vertex
+            }
+            q.remove(u)
+
+            for(pred in u.predecessors) {
+                var alt = map[u]!! + pred.weights[u]!!
+
+                if(alt < map[pred]!!) {
+                    map[pred] = alt
+                    pred.prev = u
+                }
+            }
+        }
+        return map
+
+    }
+
+
 
 
     /*
-    fun solveAlongPath(): Branch {              //(p: path (execution), p(i): (branch on p), S: (path along CFG) ) =
-                                                // = q: [p(0)..p(i-1) = q(..i-1)], [q(i..) matches S]
+    fun dijkstra(v: Vertex) { //: mutableSet<Vertex>? :mutableMap<Vertex, Int>?
+        val q = mutableSetOf<Vertex>()
+        var prev: Vertex? = null
+        q.add(v)
+        v.uncoveredDistance[v] = 0
 
+        for(vertex in vertices){
+            if(vertex == v)
+                continue
+            //check if vertex/v is BlockBranch. Otherwise theres no reason of computing UD      ?????
+            /*
+            if(vertex.action is BlockBranch) {
+                v.uncoveredDistance[vertex] = Int.MAX_VALUE
+                //prev[vertex] = UNDEFINED
+                q.add(vertex)
+            }
+            */
+            v.uncoveredDistance[vertex] = Int.MAX_VALUE
+            q.add(vertex)
+        }
+        var u:Vertex = v
+        while (q.isNotEmpty()) {
+
+            //u = vertex in Q with minimal dist from source
+            for(vertex in q)
+                if (vertex.uncoveredDistance[vertex]!! <  u.uncoveredDistance[u]!!)     //?
+                    u = vertex
+            q.remove(u)
+
+            for(pred in u.predecessors) {
+                var alt = u.uncoveredDistance[pred]!! + v.uncoveredDistance[u]!!
+
+                if(alt < v.uncoveredDistance[pred]!!) {
+                    v.uncoveredDistance[pred] = alt
+                    v.prev = u
+                }
+            }
+        }
+        return //dist[] prev[]
     }
 
+     */
 
+
+    /*
+    fun solveAlongPath() {                       //(p: path (execution), p(i): (branch on p), S: (path along CFG) ) =
+                                                 // = q: [p(0)..p(i-1) = q(..i-1)], [q(i..) matches S]
+
+    }
     */
 
 }
