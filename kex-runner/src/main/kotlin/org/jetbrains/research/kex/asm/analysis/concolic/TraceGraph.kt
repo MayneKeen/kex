@@ -371,6 +371,7 @@ class WeightedTraceGraph(startTrace: Trace): TraceGraph(startTrace) {
         val q = mutableSetOf<Vertex>()
         val map = mutableMapOf<Vertex, Int >()
         //var prev: Vertex? = null
+
         q.add(v)
         v.uncoveredDistance = 0
         map[v] = 0
