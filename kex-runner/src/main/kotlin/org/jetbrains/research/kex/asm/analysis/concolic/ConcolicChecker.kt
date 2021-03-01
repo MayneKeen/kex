@@ -138,14 +138,14 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
                     val prevBlock = prevBlockStack.pop()
                     val current = action.block
                     val next = filteredTrace.getOrNull(index + 1) as? BlockAction
-                    try {
-                        builder.build(current, prevBlock.block, next?.block)
-                        methodStack.pop()
-                    }
-                    catch (e: java.util.NoSuchElementException) {
+                    //try {
+                    builder.build(current, prevBlock.block, next?.block)
+                    methodStack.pop()
+                    //}
+                    /*catch (e: java.util.NoSuchElementException) {
                         print(e.stackTrace)
                         throw e
-                    }
+                    }*/
 
                     builder.exitMethod(action.method)
                 }
@@ -311,4 +311,16 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
             paths += path
         return resultingTrace
     }
+
+
+    //cfgds
+
+
+    //(p: path (execution), p(i): (branch on p), S: (path along CFG) ) =
+    // = q: [p(0)..p(i-1) = q(..i-1)], [q(i..) matches S]
+    private suspend fun solveAlongPath(/*p, i, s*/) {
+
+    }
+
+
 }

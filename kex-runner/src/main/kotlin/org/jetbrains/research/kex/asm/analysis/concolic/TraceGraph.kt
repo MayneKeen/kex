@@ -3,7 +3,7 @@ package org.jetbrains.research.kex.asm.analysis.concolic
 import com.abdullin.kthelper.collection.queueOf
 import com.abdullin.kthelper.collection.stackOf
 import org.jetbrains.research.kex.trace.`object`.*
-
+import sun.jvm.hotspot.opto.Block
 
 
 //CFG by AndreyBychkov https://github.com/AndreyBychkov
@@ -16,9 +16,11 @@ open class TraceGraph(startTrace: Trace) {
                       val successors: MutableCollection<Vertex>) {
 
         val weights: MutableMap<Vertex, Int> = mutableMapOf()
-        //val uncoveredDistance: MutableMap<Vertex, Int> = mutableMapOf()
         var uncoveredDistance: Int = 0
-        var nearestCovered: Vertex? = null //?
+
+        var nearestCovered: Vertex? = null //???
+        var nearestUncovered: Vertex? = null //???
+
         var prev: Vertex? = null
 
         var tries: Int? = 0
@@ -66,7 +68,7 @@ open class TraceGraph(startTrace: Trace) {
     var depth: Int = 0
         protected set                                                                                    //was private
 
-    init {
+    init { //TraceGraph(Trace startTrace) {
         traces.add(startTrace)
         val actionTail = startTrace.actions
         val root = Vertex(actionTail[0], mutableSetOf(), mutableSetOf())
@@ -231,6 +233,8 @@ class DominatorTraceGraph(startTrace: Trace) : TraceGraph(startTrace) {
     }
 }
 
+/*
+
 class WeightedTraceGraph(startTrace: Trace): TraceGraph(startTrace) {
 
     init {
@@ -241,7 +245,6 @@ class WeightedTraceGraph(startTrace: Trace): TraceGraph(startTrace) {
 
         for (action in actionTail.drop(1)) {
             val currPred = vertices.last()
-            //TODO("Add weights init")
 
             val currVertex = Vertex(action, mutableSetOf(currPred), mutableSetOf())
 
@@ -251,9 +254,6 @@ class WeightedTraceGraph(startTrace: Trace): TraceGraph(startTrace) {
             else {
                 addEdgeWithWeight(currPred, currVertex, 0)
             }
-
-            //addEdgeWithWeight(currPred, currVertex, 0)
-            //currPred.successors.add(currVertex)
             vertices.add(currVertex)
         }
         rootToLeaf[root] = vertices.last()
@@ -279,7 +279,6 @@ class WeightedTraceGraph(startTrace: Trace): TraceGraph(startTrace) {
         else
             addEdgeWithWeight(predecessor, vert, 0)
 
-        //addEdgeWithWeight(predecessor, vert, 0)
         vertices.add(vert)
         return vert
     }
@@ -300,15 +299,10 @@ class WeightedTraceGraph(startTrace: Trace): TraceGraph(startTrace) {
             val sameMethod = predecessorInSameMethod(found)
             // TODO:? Whats next?
 
-            //previousVertex?.successors?.add(found)
-
             if(found.action is BlockBranch)
                 addEdgeWithWeight(previousVertex, found, 1)
-
             else
                 addEdgeWithWeight(previousVertex, found, 0)
-
-            //addEdgeWithWeight(previousVertex, found, 0)
 
             found.predecessors.addAll(vertices.filter { found in it.successors })
             foundVerticesStack.peek().add(found)
@@ -334,15 +328,23 @@ class WeightedTraceGraph(startTrace: Trace): TraceGraph(startTrace) {
                 if(uncoveredBranches.contains(key))
                     continue
 
-                if(map[key]!! < dist) {
+                if(key.action is BlockBranch && map[key]!! < dist) {
                     dist = map[key]!!
                     vert = key
                 }
             }
 
-            if(vert != null) {
+           /* if(vert != null) {
                 vertex.uncoveredDistance = dist
-                vertex.nearestCovered = vert
+                vertex.nearestCovered = vert                                    //nearest covered BlockBranch
+            }
+            */
+
+            if(vert != null) {
+                if(dist < vert.uncoveredDistance) {
+                    vert.uncoveredDistance = dist
+                    vert.nearestUncovered = vertex
+                }
             }
 
         }
@@ -353,9 +355,6 @@ class WeightedTraceGraph(startTrace: Trace): TraceGraph(startTrace) {
         val result: MutableSet<Vertex> = mutableSetOf()
 
         for(vertex in vertices) {
-            /*if(vertex.action !is BlockBranch)
-                continue
-              */
             result.add(vertex)
             traces.forEach {
                 if (it.contains(vertex))
@@ -365,12 +364,10 @@ class WeightedTraceGraph(startTrace: Trace): TraceGraph(startTrace) {
         return result
     }
 
-//runs dijkstra alg 4 a covered vertex (//BlockBranch)
-
-    fun dijkstra(v: Vertex): MutableMap<Vertex, Int> {
+    private fun dijkstra(v: Vertex): MutableMap<Vertex, Int> {
         val q = mutableSetOf<Vertex>()
         val map = mutableMapOf<Vertex, Int >()
-        //var prev: Vertex? = null
+        var u: Vertex = v
 
         q.add(v)
         v.uncoveredDistance = 0
@@ -382,8 +379,6 @@ class WeightedTraceGraph(startTrace: Trace): TraceGraph(startTrace) {
             q.add(vertex)
             map[vertex] = Int.MAX_VALUE
         }
-
-        var u:Vertex = v
 
         while (q.isNotEmpty()) {
             for(vertex in q){
@@ -402,56 +397,7 @@ class WeightedTraceGraph(startTrace: Trace): TraceGraph(startTrace) {
             }
         }
         return map
-
     }
-
-
-
-
-    /*
-    fun dijkstra(v: Vertex) { //: mutableSet<Vertex>? :mutableMap<Vertex, Int>?
-        val q = mutableSetOf<Vertex>()
-        var prev: Vertex? = null
-        q.add(v)
-        v.uncoveredDistance[v] = 0
-
-        for(vertex in vertices){
-            if(vertex == v)
-                continue
-            //check if vertex/v is BlockBranch. Otherwise theres no reason of computing UD      ?????
-            /*
-            if(vertex.action is BlockBranch) {
-                v.uncoveredDistance[vertex] = Int.MAX_VALUE
-                //prev[vertex] = UNDEFINED
-                q.add(vertex)
-            }
-            */
-            v.uncoveredDistance[vertex] = Int.MAX_VALUE
-            q.add(vertex)
-        }
-        var u:Vertex = v
-        while (q.isNotEmpty()) {
-
-            //u = vertex in Q with minimal dist from source
-            for(vertex in q)
-                if (vertex.uncoveredDistance[vertex]!! <  u.uncoveredDistance[u]!!)     //?
-                    u = vertex
-            q.remove(u)
-
-            for(pred in u.predecessors) {
-                var alt = u.uncoveredDistance[pred]!! + v.uncoveredDistance[u]!!
-
-                if(alt < v.uncoveredDistance[pred]!!) {
-                    v.uncoveredDistance[pred] = alt
-                    v.prev = u
-                }
-            }
-        }
-        return //dist[] prev[]
-    }
-
-     */
-
 
     /*
     fun solveAlongPath() {                       //(p: path (execution), p(i): (branch on p), S: (path along CFG) ) =
@@ -461,3 +407,5 @@ class WeightedTraceGraph(startTrace: Trace): TraceGraph(startTrace) {
     */
 
 }
+
+ */
