@@ -23,10 +23,11 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
 
         var prev: Vert? = null
 
-        var tries: Int? = 0                                         //number of times branchWasNegated
+        var tries: Int = 0                                         //number of times branchWasNegated
 
         val terminateInst = this.bb.terminator
 
+        val callInst: Instruction? = null
 
         override fun hashCode(): Int {
             return bb.hashCode()
@@ -55,27 +56,6 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
         protected set
 
 
-   /* private fun addMethod(method: Method, predecessor: Vert?): Vert? {
-        val blocks = method.bodyBlocks
-        val blockList = mutableListOf<BasicBlock>()
-        blockList.addAll(blocks)
-
-        var temp = method.entry
-
-        var lastWrapped: Vert? = wrapAndAddBlock(temp, predecessor)
-
-        while (blockList.isNotEmpty()) {
-            temp = method.getNext(temp)
-            lastWrapped = wrapAndAddBlock(temp, lastWrapped)
-            blockList.minus(temp)
-        }
-
-        return lastWrapped
-    }
-
-    */
-
-
     private fun isInGraph(block: BasicBlock): Vert? {
         for(vertex in vertices) {
             if(vertex.bb == block)
@@ -84,18 +64,26 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
         return null
     }
 
+
+    //I M P O R T A N T
+
+    //could use vertices.add(vert)
+    //for every addEdgeWithWeight in here
+
     private fun wrapAndAddBlock(block: BasicBlock, predecessor: Vert?): Vert? {
         val pred = listOfNotNull(predecessor).toMutableSet()
         var vert: Vert? = isInGraph(block)
 
-        for(inst in block.instructions) {
-            if(inst is CallInst) {
-                //TODO("If Block contains CallInst what r we doing?")
-            }
-        }
-
         if(vert == null) {
             vert = Vert(block, pred, mutableSetOf())
+        }
+
+        for(inst in block.instructions) {
+            if(inst is CallInst) {
+                val clonedVert = Vert(block, pred, mutableSetOf())
+                addEdgeWithWeight(clonedVert, predecessor, 0)
+                vertices.add(vert)
+            }
         }
 
         when (block.terminator) {
@@ -104,32 +92,31 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
                 for(successor in block.successors) {
                     wrapAndAddBlock(successor, vert)
                 }
+                vertices.add(vert)
                 return vert
             }
 
             is SwitchInst -> {
-                vert.predecessors.forEach { addEdgeWithWeight(it, vert, 0) }  //or weight 1?
+                vert.predecessors.forEach { addEdgeWithWeight(it, vert, 1) }
                 for(successor in block.successors){
                     wrapAndAddBlock(successor, vert)
                 }
+                vertices.add(vert)
                 return vert
             }
 
             is TableSwitchInst -> {
-                vert.predecessors.forEach { addEdgeWithWeight(it, vert, 0) }  //or weight 1?
+                vert.predecessors.forEach { addEdgeWithWeight(it, vert, 1) }
                 for(successor in block.successors){
                     wrapAndAddBlock(successor, vert)
                 }
-                return vert
-            }
-
-            is JumpInst -> {
-                //TODO("What r we supposed 2 do")
+                vertices.add(vert)
                 return vert
             }
 
             else -> {
                 vert.predecessors.forEach { addEdgeWithWeight(it, vert, 0) }
+                vertices.add(vert)
                 return vert
             }
         }
@@ -150,14 +137,6 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
         val concreteClasses = cm.concreteClasses
         val allMethods: MutableSet<Method> = mutableSetOf()
         concreteClasses.forEach { allMethods.addAll(it.allMethods) }
-        /*
-        var last: Vert? = null                                    //we should have used root here, but the resulting
-        for(method in allMethods) {                                 //structure is gonna be fucked up
-            last = addMethod(method, last)
-
-
-        }
-        */
 
         root.bb.successors.forEach{ recursiveAdd(it, root) }
 
@@ -171,9 +150,6 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
             recursiveAdd(successor, pred)
         }
     }
-
-
-
 
     fun getTraces(): List<Trace> {
         return traces.toList()
@@ -224,9 +200,11 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
 
 
     private fun actionEqualsBB(action: Action, bb: BasicBlock): Boolean {
-        //TODO("comparison")
+        if(action is BlockAction)
+            return action.block == bb
         return false
     }
+
 
     private fun findUncovered(): MutableSet<Vert> {
         val result: MutableSet<Vert> = mutableSetOf()
@@ -253,17 +231,14 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
                 if(uncoveredBranches.contains(key))
                     continue
 
-                if(key.bb.terminator is BranchInst && map[key]!! < dist) {
+                if((key.terminateInst is BranchInst
+                                || key.terminateInst is SwitchInst
+                                || key.terminateInst is TableSwitchInst)
+                        && map[key]!! < dist) {
                     dist = map[key]!!
                     vert = key
                 }
             }
-
-            /* if(vert != null) {
-                 vertex.uncoveredDistance = dist
-                 vertex.nearestCovered = vert                                    //nearest covered BlockBranch
-             }
-             */
 
             if(vert != null) {
                 if(dist < vert.uncoveredDistance) {
@@ -275,8 +250,6 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
         }
         return
     }
-
-    //SAME AS RECOMPUTE_UD
 
     private fun dijkstra(v: Vert): MutableMap<Vert, Int> {
         val q = mutableSetOf<Vert>()
@@ -312,4 +285,52 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
         }
         return map
     }
+
+    fun findVertByBB(bb: BasicBlock): Vert? {
+        for(vertex in vertices) {
+            if(vertex.bb == bb)
+                return vertex
+        }
+        return null
+    }
+
+    fun findWithMinUD(trace: Trace): MutableList<Vert> {
+        val result = mutableListOf<Vert>()
+        var ud = Int.MAX_VALUE
+
+        //we're gettin a list containing all of the BlockActions in our trace out of here
+        for(action in trace.actions) {
+            if(action is BlockAction){
+                val vert = findVertByBB(action.block)
+                if(vert != null) {
+                    result.add(vert)
+                    if(vert.uncoveredDistance < ud)
+                        ud = vert.uncoveredDistance
+                }
+            }
+        }
+
+        //then we search for minimum UD among our branches
+        for(vert in result) {
+            if (!(vert.terminateInst is BranchInst
+                            || vert.terminateInst is SwitchInst
+                            || vert.terminateInst is TableSwitchInst)) {
+                result.remove(vert)
+                continue
+            }
+            if (vert.uncoveredDistance > ud)
+                result.remove(vert)
+
+        }
+        return result
+    }
+
+
+    fun dropTries() {
+        for (vertex in vertices) {
+            vertex.tries = 0
+        }
+        return
+    }
+
 }
