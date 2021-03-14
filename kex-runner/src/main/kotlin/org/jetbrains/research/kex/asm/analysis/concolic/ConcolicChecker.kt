@@ -313,14 +313,117 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
     }
 
 
-    //cfgds
-
-
-    //(p: path (execution), p(i): (branch on p), S: (path along CFG) ) =
-    // = q: [p(0)..p(i-1) = q(..i-1)], [q(i..) matches S]
-    private suspend fun solveAlongPath(/*p, i, s*/) {
-
+    private fun getState(block: BasicBlock): PredicateState? {
+        val psa = PredicateStateAnalysis(cm)
+        val builder = psa.builder(block.parent)
+        return builder.getInstructionState(block.terminator)
     }
 
 
+    private fun searchAlongPath(graph: StaticGraph, trace: Trace, branch: StaticGraph.Vert?): Trace? {
+
+        //for every branch.ud+tries < ud in that trace loop
+        //build pred state, mutate it and execute
+
+        //upd: getState(branch.bb) && force it, returning a trace and that's it
+        //all the other stuff already done in CFGDS
+
+        return null
+    }
+
+    //the search terminates in failure
+    //if it runs out of branches to select, it exhausts its budget of
+    //test iterations, or if it uncovers no new branches after some
+    //set number of iterations.
+
+    private fun finish() {
+        //something about finishing our search and printing stats or smth like that
+        //do we need this?
+    }
+
+    suspend fun cfgds(graph: StaticGraph) {
+
+        var lastTrace = getRandomTraceUntilSuccess(graph.enterPoint)
+        yield()
+
+        var failedIterations: Int = 0  //????
+
+        val failedToForce = mutableSetOf<StaticGraph.Vert>()
+
+        val candidates = mutableSetOf<StaticGraph.Vert>() //????
+
+        while (true) {
+
+
+            graph.addTrace(lastTrace)
+            graph.recomputeUncoveredDistance()
+            graph.dropTries()
+
+            var found = graph.nextBranchToForce(failedToForce)
+
+
+            if (found == null) {
+                log.debug("Could not find a branch to force, exiting")
+                finish()
+                break
+            }
+
+            val branch = found.bb
+
+
+            val state: PredicateState? = getState(branch)
+            found.tries += 1
+
+            if (state == null || state.isEmpty) {
+                log.debug("Could not generate a PredicateState for block $branch")
+                failedToForce.add(found)
+                continue
+            }
+
+            //give our state 2 solver and try to process a new trace
+            //putting result in lastTrace
+
+            //if we couldnt force that branch (actions empty, trace == null)
+            // , add it to failedToForce
+
+
+            graph.recomputeUncoveredDistance()
+            graph.addTrace(lastTrace)
+
+            var tempBranch = graph.findBranchForSAP(lastTrace, failedToForce)
+
+            if (tempBranch == null) {
+                log.debug("Could not find a branch to force by SearchAlongPath, continuing CFGDS")
+                continue
+            }
+
+            var ud = tempBranch.uncoveredDistance + tempBranch.tries
+            tempBranch.tries += 1
+
+            var trace = searchAlongPath(graph, lastTrace, tempBranch)
+
+            while (trace != null && trace.actions.isNotEmpty()
+                    && tempBranch != null
+                    && (tempBranch.uncoveredDistance + tempBranch.tries <= ud) ) {
+
+
+                lastTrace = trace
+                graph.addTrace(lastTrace)
+                graph.recomputeUncoveredDistance()
+
+                tempBranch = graph.findBranchForSAP(lastTrace, failedToForce)
+
+                if(tempBranch == null)
+                    break
+
+                tempBranch.tries += 1
+                trace = searchAlongPath(graph, lastTrace, tempBranch)
+
+            }
+
+            log.debug("SearchAlongPath iteration finished, trying to force a new branch in CFGDS")
+        }
+
+
+    }
 }

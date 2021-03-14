@@ -16,7 +16,7 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
                     val successors: MutableCollection<Vert>) {
 
         val weights: MutableMap<Vert, Int> = mutableMapOf()
-        var uncoveredDistance: Int = 0
+        var uncoveredDistance: Int = Int.MAX_VALUE
 
         var nearestCovered: Vert? = null //???
         var nearestUncovered: Vert? = null //???
@@ -63,12 +63,6 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
         }
         return null
     }
-
-
-    //I M P O R T A N T
-
-    //could use vertices.add(vert)
-    //for every addEdgeWithWeight in here
 
     private fun wrapAndAddBlock(block: BasicBlock, predecessor: Vert?): Vert? {
         val pred = listOfNotNull(predecessor).toMutableSet()
@@ -187,7 +181,10 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
     fun BasicBlock.findExcept(foundVertices: Set<Vert>) = vertices.minus(foundVertices).find { it.bb == this }
 
 
-    fun addTrace(trace: Trace) = traces.add(trace)
+    fun addTrace(trace: Trace) {
+        traces.add(trace)
+
+    }
 
     private fun addEdgeWithWeight(from: Vert?, to: Vert?, weight: Int): Boolean {
         if ( from == null || to == null || weight<=-2  /*|| !from.successors.contains(to) */)
@@ -197,7 +194,6 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
         to.predecessors.add(from)
         return true
     }
-
 
     private fun actionEqualsBB(action: Action, bb: BasicBlock): Boolean {
         if(action is BlockAction)
@@ -294,19 +290,23 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
         return null
     }
 
-    fun findWithMinUD(trace: Trace): MutableList<Vert> {
+    fun findWithMinUD(trace: Trace, failed: MutableSet<Vert>): MutableList<Vert> {
         val result = mutableListOf<Vert>()
         var ud = Int.MAX_VALUE
 
-        //we're gettin a list containing all of the BlockActions in our trace out of here
+        //we're gettin a list containing all of the BlockActions in our trace
+        //vertices in failed Set will be ignored
         for(action in trace.actions) {
             if(action is BlockAction){
                 val vert = findVertByBB(action.block)
-                if(vert != null) {
+
+                if(vert != null && !failed.contains(vert)) {
                     result.add(vert)
-                    if(vert.uncoveredDistance < ud)
-                        ud = vert.uncoveredDistance
+                    if(vert.uncoveredDistance + vert.tries < ud )
+                        ud = vert.uncoveredDistance + vert.tries
                 }
+                else
+                    continue
             }
         }
 
@@ -318,9 +318,31 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
                 result.remove(vert)
                 continue
             }
-            if (vert.uncoveredDistance > ud)
+            if (vert.uncoveredDistance + vert.tries > ud)
                 result.remove(vert)
 
+        }
+        return result
+    }
+
+    //returns a branch with min UncoveredDistance for a trace
+    fun findBranchForSAP(trace: Trace, failed: MutableSet<Vert>): Vert? {
+        val list = findWithMinUD(trace, failed)
+        if(list.isEmpty())
+            return null
+
+        return list[0]
+    }
+
+    //returns next branch according to our algorithm to be forced by cfgds
+    fun nextBranchToForce(failed: MutableSet<Vert>): Vert? {
+        var result: Vert? = null
+        for(trace in traces) {
+            val temp = findBranchForSAP(trace, failed) ?: continue
+            if(result == null)
+                result = temp
+            if(result.uncoveredDistance + result.tries > temp.uncoveredDistance + temp.tries)
+                result = temp
         }
         return result
     }
