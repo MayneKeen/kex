@@ -3,7 +3,6 @@ package org.jetbrains.research.kex.asm.analysis.concolic
 import com.abdullin.kthelper.collection.queueOf
 import com.abdullin.kthelper.collection.stackOf
 import org.jetbrains.research.kex.trace.`object`.*
-import sun.jvm.hotspot.opto.Block
 
 
 //CFG by AndreyBychkov https://github.com/AndreyBychkov

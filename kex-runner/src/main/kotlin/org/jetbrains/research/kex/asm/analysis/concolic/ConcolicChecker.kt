@@ -401,9 +401,13 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
             failedIterations = 0
             lastSuccessful = tempTrace
 
-            graph.addTrace(lastSuccessful)
+            val newBranchCovered = graph.addTrace(lastSuccessful)
+            if(!newBranchCovered) {
+                failedIterations++
+                log.debug("SAP: Processing trace was successful, but no new branches are covered")
+            }
 
-            if(failedIterations > 15) {
+            if(failedIterations > 20) {
                 log.debug("SAP: too many failed iterations in a row")
                 break
             }
@@ -436,7 +440,13 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
 
         while (true) {
 
-            graph.addTrace(lastTrace)
+            var newBranchCovered = graph.addTrace(lastTrace)
+
+            if(!newBranchCovered) {
+                failedIterations++
+                log.debug("CFGDS: Processing trace was successful, but no new branches are covered")
+            }
+
             //graph.dropTries() //?
 
             var found = graph.nextBranchToForce(failedToForce)
@@ -446,7 +456,7 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
                 finish()
                 break
             }
-            if(failedIterations > 15) {
+            if(failedIterations > 20) {
                 log.debug("CFGDS: too many failed iterations in a row, exiting")
                 finish()
                 break
@@ -479,7 +489,11 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
             lastTrace = tempTrace
             failedIterations = 0
 
-            graph.addTrace(lastTrace)
+            newBranchCovered = graph.addTrace(lastTrace)
+            if(!newBranchCovered) {
+                failedIterations++
+                log.debug("CFGDS: Processing trace was successful, but no new branches are covered")
+            }
 
             val ud = found.uncoveredDistance + found.tries
             var trace = searchAlongPath(graph, lastTrace, failedToForce, ud)
