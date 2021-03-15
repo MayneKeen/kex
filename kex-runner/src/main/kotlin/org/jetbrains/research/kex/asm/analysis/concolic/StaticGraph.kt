@@ -8,7 +8,7 @@ import org.jetbrains.research.kfg.ir.*
 import org.jetbrains.research.kfg.ir.value.instruction.*
 
 
-class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: Method) {
+class StaticGraph(val cm: ClassManager, val enterPoint: Method) {
 
 
     data class Vert(val bb: BasicBlock,
@@ -121,8 +121,7 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
     private var rootMethod: Method
     private var root: Vert
 
-    init {          //val cm: ClassManager, val startTrace: Trace, val enterPoint: Method
-        addTrace(startTrace)
+    init {          //val cm: ClassManager, val enterPoint: Method
 
         rootMethod = enterPoint
         root = wrapAndAddBlock(rootMethod.entry, null)!!
@@ -135,6 +134,7 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
         root.bb.successors.forEach{ recursiveAdd(it, root) }
 
     }
+
     private fun recursiveAdd(bb: BasicBlock, predecessor: Vert?) {
         var curr = bb
         var pred = predecessor
@@ -313,16 +313,17 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
         }
 
         //then we search for minimum UD among our branches
-        for(vert in result) {
+        val iterator = result.iterator()
+        while(iterator.hasNext()) {
+            var vert = iterator.next()
             if (!(vert.terminateInst is BranchInst
                             || vert.terminateInst is SwitchInst
                             || vert.terminateInst is TableSwitchInst)) {
-                result.remove(vert)
+                iterator.remove()
                 continue
             }
             if (vert.uncoveredDistance + vert.tries > ud)
-                result.remove(vert)
-
+                iterator.remove()
         }
         return result
     }

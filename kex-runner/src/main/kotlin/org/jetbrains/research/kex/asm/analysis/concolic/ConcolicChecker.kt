@@ -53,6 +53,7 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
         paths.clear()
     }
 
+/*
     private fun analyze(method: Method) {
         log.debug(method.print())
         try {
@@ -63,6 +64,29 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
                         processTree(method, statistics)
                         statistics.stopTimeMeasurement()
                         log.info(statistics.print())
+                    } catch (e: TimeoutException) {
+                        log.debug("Timeout on running $method")
+                    }
+                }
+            }
+        } catch (e: TimeoutCancellationException) {
+            return
+        }
+    }
+
+ */
+
+
+    private fun analyze(method: Method) {
+        log.debug(method.print())
+        try {
+            runBlocking {
+                withTimeout(timeLimit) {
+                    try {
+                        //val statistics = Statistics("CGS", method.toString(), 0, Duration.ZERO, 0)
+                        processCFGDS(method)
+                        //statistics.stopTimeMeasurement()
+                        //log.info(statistics.print())
                     } catch (e: TimeoutException) {
                         log.debug("Timeout on running $method")
                     }
@@ -312,6 +336,10 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
         return resultingTrace
     }
 
+    private suspend fun processCFGDS(method: Method) {
+        val graph = StaticGraph(cm, method)
+        cfgds(graph)
+    }
 
     private fun getState(block: BasicBlock): PredicateState? {
         val psa = PredicateStateAnalysis(cm)
@@ -439,6 +467,7 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
                 continue
             }
             var tempTrace = execute(graph.enterPoint, lastTrace, ps)
+            yield()
 
             if(tempTrace == null || tempTrace.actions.isEmpty()) {
                 log.debug("Could not process a trace for branch $branch")
@@ -454,6 +483,7 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
 
             val ud = found.uncoveredDistance + found.tries
             var trace = searchAlongPath(graph, lastTrace, failedToForce, ud)
+            //yield()
             lastTrace = trace
 
             log.debug("SearchAlongPath finished, trying to force a new branch in CFGDS")
