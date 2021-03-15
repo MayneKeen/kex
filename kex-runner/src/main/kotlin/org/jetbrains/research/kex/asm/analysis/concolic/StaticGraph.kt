@@ -18,16 +18,16 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
         val weights: MutableMap<Vert, Int> = mutableMapOf()
         var uncoveredDistance: Int = Int.MAX_VALUE
 
+        var isCovered = false
+
         var nearestCovered: Vert? = null //???
         var nearestUncovered: Vert? = null //???
 
         var prev: Vert? = null
 
         var tries: Int = 0                                         //number of times branchWasNegated
-
         val terminateInst = this.bb.terminator
-
-        val callInst: Instruction? = null
+        var callInst: Instruction? = null
 
         override fun hashCode(): Int {
             return bb.hashCode()
@@ -53,7 +53,7 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
     val leafToRoot
         get() = rootToLeaf.entries.associate { (k, v) -> v to k }
     var depth: Int = 0
-        protected set
+        private set
 
 
     private fun isInGraph(block: BasicBlock): Vert? {
@@ -75,6 +75,7 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
         for(inst in block.instructions) {
             if(inst is CallInst) {
                 val clonedVert = Vert(block, pred, mutableSetOf())
+                clonedVert.callInst = inst
                 addEdgeWithWeight(clonedVert, predecessor, 0)
                 vertices.add(vert)
             }
@@ -114,7 +115,6 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
                 return vert
             }
         }
-
 
     }
 
@@ -183,7 +183,13 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
 
     fun addTrace(trace: Trace) {
         traces.add(trace)
-
+        for(action in trace.actions) {
+            for(vert in vertices) {
+                if(actionEqualsBB(action, vert.bb))
+                    vert.isCovered = true
+            }
+        }
+        recomputeUncoveredDistance()
     }
 
     private fun addEdgeWithWeight(from: Vert?, to: Vert?, weight: Int): Boolean {
@@ -206,25 +212,21 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
         val result: MutableSet<Vert> = mutableSetOf()
 
         for(vertex in vertices) {
-            result.add(vertex)
-            traces.forEach {
-                for(action in it)
-                    if(actionEqualsBB(action, vertex.bb))
-                        result.remove(vertex)
-            }
+            if(!vertex.isCovered)
+                result.add(vertex)
         }
         return result
     }
 
     fun recomputeUncoveredDistance() {
-        val uncoveredBranches: MutableSet<Vert> = findUncovered()
-        for(vertex in uncoveredBranches){
+        val uncovered: MutableSet<Vert> = findUncovered()
+        for(vertex in uncovered){
             val map = dijkstra(vertex)
             var dist = Int.MAX_VALUE
             var vert: Vert? = null
 
             for(key: Vert in map.keys) {
-                if(uncoveredBranches.contains(key))
+                if(uncovered.contains(key))
                     continue
 
                 if((key.terminateInst is BranchInst
@@ -282,7 +284,7 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
         return map
     }
 
-    fun findVertByBB(bb: BasicBlock): Vert? {
+    private fun findVertByBB(bb: BasicBlock): Vert? {
         for(vertex in vertices) {
             if(vertex.bb == bb)
                 return vertex
@@ -290,7 +292,7 @@ class StaticGraph(val cm: ClassManager, val startTrace: Trace, val enterPoint: M
         return null
     }
 
-    fun findWithMinUD(trace: Trace, failed: MutableSet<Vert>): MutableList<Vert> {
+    private fun findWithMinUD(trace: Trace, failed: MutableSet<Vert>): MutableList<Vert> {
         val result = mutableListOf<Vert>()
         var ud = Int.MAX_VALUE
 
