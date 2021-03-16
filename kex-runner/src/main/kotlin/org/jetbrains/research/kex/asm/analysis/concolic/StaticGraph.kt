@@ -143,9 +143,79 @@ class StaticGraph(val cm: ClassManager, val enterPoint: Method) {
         val allMethods: MutableSet<Method> = mutableSetOf()
         concreteClasses.forEach { allMethods.addAll(it.allMethods) }
 
-        root.bb.successors.forEach{ addBlocks(it, root) }
+        //root.bb.successors.forEach{ addBlocks(it, root) }
+
+        //commented line above was used in the previous version
+        //addBlocks was only adding 5 or 6 blocks into our graph and
+        // then it had thought its job was over
+
+        //new version is:
+        buildGraph(root)
+
+        //but it also contains some problems, that I haven't fixed yet
+        //the main problem is: I see NoSuchElementException being thrown
+        // from line 194 - "Collection contains no element matching the predicate."
+        // - buildGraph falls when its trying to get CallInst.method.entry. Y?
 
     }
+
+    private fun buildGraph(root: Vert) {
+        //vertices, which bb's successors should be added at current iteration
+        var current = mutableSetOf<Vert>()
+        current.add(root)
+        //next iteration
+        val next = mutableSetOf<Vert>()
+
+        val visited = mutableSetOf<Vert>()
+
+        while(true) {
+
+            current = current.filter{ !visited.contains(it) }.toMutableSet()
+
+            if(current.isEmpty()) {
+                break
+            }
+
+            //current stores vertices that are already in graph
+            // and here we are adding their bb's.successors to our graph
+            for(element: Vert in current) {
+                //element should be already added to the graph, and now we're adding its successors
+                for(block in element.bb.successors) {
+                    //this vert.successors will be added to our graph at the next iteration
+                    val vert = wrapAndAddBlock(block, element)
+                    next.add(vert)
+
+                }//for block in element ends
+
+                //callInst
+                //jumpInst
+                element.bb.instructions.forEach {
+                    if(it is CallInst) {
+                        val block = it.method.entry
+                        val vert = wrapAndAddBlock(block, element)
+                        next.add(vert)
+                    }
+
+                    if(it is JumpInst) {
+                        val block = it.successor
+                        val vert = wrapAndAddBlock(block, element)
+                        next.add(vert)
+                    }
+                }
+
+
+                visited.add(element)
+            }//for element in current ends
+
+            //preparing 4 the next iteration
+            current.removeAll(current)
+            current.addAll(next)
+            next.removeAll(next)
+
+        }//while true ends
+        return
+    }
+
 
     private fun addBlocks(bb: BasicBlock, predecessor: Vert?) {
         //wrapping the first block to start with non-null pred
@@ -218,6 +288,7 @@ class StaticGraph(val cm: ClassManager, val enterPoint: Method) {
         }
         return
     }
+
 
     fun getTraces(): List<Trace> {
         return traces.toList()
