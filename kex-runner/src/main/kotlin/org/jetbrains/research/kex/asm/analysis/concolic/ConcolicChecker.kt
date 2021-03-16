@@ -34,7 +34,7 @@ import java.time.Duration
 import java.time.temporal.ChronoUnit
 import java.util.*
 import kotlin.NoSuchElementException
-
+import kotlin.system.exitProcess
 
 
 //Added CGS by AndreyBychkov https://github.com/AndreyBychkov
@@ -389,7 +389,7 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
             branch.tries +=1
             val ps = getState(branch.bb) ?: return lastSuccessful
             tempTrace = execute(graph.enterPoint, lastSuccessful, ps)
-            yield()
+            //yield()
 
             if (tempTrace == null || tempTrace.actions.isEmpty()) {
                 log.debug("Could not process trace for branch $branch")
@@ -423,8 +423,24 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
     //test iterations, or if it uncovers no new branches after some
     //set number of iterations.
 
-    private fun finish() {
+    private fun finish(graph: StaticGraph) {
         log.debug("Finishing the search")
+
+        val count = graph.vertices.size.toDouble()
+        var covered = 0.0
+
+        for(vertex in graph.vertices) {
+            if(vertex.isCovered)
+                covered += 1.0
+        }
+
+        var graphCoverage: Double = (covered/count).toDouble() * 100
+        log.debug("========================================================")
+        log.debug("Total static graph coverage is $graphCoverage %")
+        log.debug(graph.vertices.toString())
+        log.debug("========================================================")
+        exitProcess(0)
+
         //something about finishing our search and printing stats or smth like that
         //do we need this?
     }
@@ -439,6 +455,7 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
         var failedIterations: Int = 0  //????
 
         while (true) {
+            log.debug("another iteration of CFGDS")
 
             var newBranchCovered = graph.addTrace(lastTrace)
 
@@ -449,17 +466,21 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
 
             //graph.dropTries() //?
 
+            log.debug("searching for a branch to force...")
             var found = graph.nextBranchToForce(failedToForce)
+            log.debug("found a branch")
 
-            if (found == null) {
-                log.debug("Could not find a branch to force, exiting")
-                finish()
-                break
-            }
+
             if(failedIterations > 20) {
                 log.debug("CFGDS: too many failed iterations in a row, exiting")
-                finish()
                 break
+            }
+
+            if (found == null) {
+                failedIterations++
+                log.debug("====================Could not find a branch to force")
+                continue
+                //break
             }
             //here we should have checked if there were any covered branches
             // and finish our search in case there weren't
@@ -476,8 +497,10 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
                 failedIterations++
                 continue
             }
+
             var tempTrace = execute(graph.enterPoint, lastTrace, ps)
-            yield()
+            //yield()
+            log.debug("just generated a trace")
 
             if(tempTrace == null || tempTrace.actions.isEmpty()) {
                 log.debug("Could not process a trace for branch $branch")
@@ -496,12 +519,13 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
             }
 
             val ud = found.uncoveredDistance + found.tries
+            log.debug("entering searchAlongPath")
             var trace = searchAlongPath(graph, lastTrace, failedToForce, ud)
             //yield()
             lastTrace = trace
 
             log.debug("SearchAlongPath finished, trying to force a new branch in CFGDS")
         }
-
+        finish(graph)
     }
 }

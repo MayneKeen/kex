@@ -1,7 +1,7 @@
 package org.jetbrains.research.kex.asm.analysis.concolic
 
 import com.abdullin.kthelper.collection.queueOf
-import org.jetbrains.research.kex.asm.analysis.concolic.TraceGraph.*
+import com.abdullin.kthelper.logging.log
 import org.jetbrains.research.kex.trace.`object`.*
 import org.jetbrains.research.kfg.ClassManager
 import org.jetbrains.research.kfg.ir.*
@@ -64,14 +64,14 @@ class StaticGraph(val cm: ClassManager, val enterPoint: Method) {
         return null
     }
 
-    private fun wrapAndAddBlock(block: BasicBlock, predecessor: Vert?): Vert? {
+    private fun wrapAndAddBlock(block: BasicBlock, predecessor: Vert?): Vert {
         val pred = listOfNotNull(predecessor).toMutableSet()
         var vert: Vert? = isInGraph(block)
 
         if(vert == null) {
             vert = Vert(block, pred, mutableSetOf())
         }
-
+/*
         for(inst in block.instructions) {
             if(inst is CallInst) {
                 val clonedVert = Vert(block, pred, mutableSetOf())
@@ -80,32 +80,44 @@ class StaticGraph(val cm: ClassManager, val enterPoint: Method) {
                 vertices.add(vert)
             }
         }
-
+ */
         when (block.terminator) {
             is BranchInst -> {
+                //log.debug("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+                //log.debug("WOW< FOUND A BRANCHINST")
+                //log.debug("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+
                 vert.predecessors.forEach { addEdgeWithWeight(it, vert, 1) }
+                vertices.add(vert)
                 for(successor in block.successors) {
                     wrapAndAddBlock(successor, vert)
                 }
-                vertices.add(vert)
                 return vert
             }
 
             is SwitchInst -> {
+                //log.debug("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+                //log.debug("WOW< FOUND A SWITCHINST")
+                //log.debug("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+
                 vert.predecessors.forEach { addEdgeWithWeight(it, vert, 1) }
+                vertices.add(vert)
                 for(successor in block.successors){
                     wrapAndAddBlock(successor, vert)
                 }
-                vertices.add(vert)
                 return vert
             }
 
             is TableSwitchInst -> {
+                //log.debug("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+                //log.debug("WOW< FOUND A TABLESWITCHINST")
+                //log.debug("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+
                 vert.predecessors.forEach { addEdgeWithWeight(it, vert, 1) }
+                vertices.add(vert)
                 for(successor in block.successors){
                     wrapAndAddBlock(successor, vert)
                 }
-                vertices.add(vert)
                 return vert
             }
 
@@ -124,25 +136,87 @@ class StaticGraph(val cm: ClassManager, val enterPoint: Method) {
     init {          //val cm: ClassManager, val enterPoint: Method
 
         rootMethod = enterPoint
-        root = wrapAndAddBlock(rootMethod.entry, null)!!
+        root = wrapAndAddBlock(rootMethod.entry, null)
         vertices.add(root)
 
         val concreteClasses = cm.concreteClasses
         val allMethods: MutableSet<Method> = mutableSetOf()
         concreteClasses.forEach { allMethods.addAll(it.allMethods) }
 
-        root.bb.successors.forEach{ recursiveAdd(it, root) }
+        root.bb.successors.forEach{ addBlocks(it, root) }
 
     }
 
-    private fun recursiveAdd(bb: BasicBlock, predecessor: Vert?) {
-        var curr = bb
-        var pred = predecessor
+    private fun addBlocks(bb: BasicBlock, predecessor: Vert?) {
+        //wrapping the first block to start with non-null pred
+        var pred = wrapAndAddBlock(bb, predecessor)
 
-        pred = wrapAndAddBlock(curr, pred)
-        for(successor in curr.successors) {
-            recursiveAdd(successor, pred)
+        //blocks to add during current iteration
+        val current = mutableMapOf<Vert, LinkedHashSet<BasicBlock>>()
+        //blocks to add during the next iteration
+        val next = mutableMapOf<Vert, LinkedHashSet<BasicBlock>>()
+
+        val visited = mutableSetOf<BasicBlock>()
+
+        current[pred] = pred.bb.successors
+        visited.add(pred.bb)
+
+        while(true) {
+            val currentIterator = current.keys.iterator()
+
+            while(currentIterator.hasNext()) {
+                val key = currentIterator.next()
+
+                //check if our vertex was already visited
+                if(visited.contains(key.bb) && key.bb != pred.bb && key.bb != predecessor?.bb) {
+                    currentIterator.remove()
+                    log.debug("GRAPH: addBlocks: removed an already visited element")
+                    continue
+                }
+
+                val value = current[key]
+                if(value.isNullOrEmpty()) {
+                    currentIterator.remove()
+                    continue
+                }
+
+                for(element in value) {
+                    val previous = wrapAndAddBlock(element, key)
+                    next[previous] = previous.bb.successors
+
+                    //putting another methods into next using CallInst's and JumpInst's succesors
+                    for(inst in element.instructions) {
+                        if(inst is CallInst && !inst.method.isEmpty()) {
+                            val temp = inst.method.entry
+                            if(next[previous].isNullOrEmpty())
+                                next[previous] = linkedSetOf(temp)
+                            else
+                                next[previous]?.add(temp)
+                        }
+
+                        else if(inst is JumpInst && !element.successors.contains(inst.successor)) {
+                            val temp = inst.successor
+                            if(next[previous].isNullOrEmpty())
+                                next[previous] = linkedSetOf(temp)
+                            else
+                                next[previous]?.add(temp)
+                        }
+
+                    }
+                    /*log.debug("block : $element")
+                    log.debug("successors : " + next[previous]) */
+                }
+                visited.add(key.bb)
+                currentIterator.remove()
+            }
+            //here current is supposed to be empty
+            current.putAll(next)
+            if(current.isEmpty())
+                break
+
+            next.keys.removeAll(next.keys)
         }
+        return
     }
 
     fun getTraces(): List<Trace> {
@@ -180,17 +254,39 @@ class StaticGraph(val cm: ClassManager, val enterPoint: Method) {
 
     fun BasicBlock.findExcept(foundVertices: Set<Vert>) = vertices.minus(foundVertices).find { it.bb == this }
 
-
-    fun addTrace(trace: Trace) {
+    //adds a trace to our graph and
+    // returns true if it contains a previously uncovered branch
+    fun addTrace(trace: Trace): Boolean {
         traces.add(trace)
-        for(action in trace.actions) {
-            for(vert in vertices) {
+        log.debug("Graph: adding a trace")
+        var newBranchCovered = false
+        for(action in trace.actions)
+            for(vert in vertices)
                 if(actionEqualsBB(action, vert.bb))
-                    vert.isCovered = true
-            }
-        }
+                    if(!vert.isCovered)
+                        when(vert.terminateInst) {
+                            is BranchInst -> {
+                                newBranchCovered = true
+                                vert.isCovered = true
+                            }
+                            is SwitchInst -> {
+                                newBranchCovered = true
+                                vert.isCovered = true
+                            }
+                            is TableSwitchInst -> {
+                                newBranchCovered = true
+                                vert.isCovered = true
+                            }
+                            else -> {
+                                vert.isCovered = true
+                            }
+                        }
+        log.debug("graph: trace added successfully, recomputing UD")
         recomputeUncoveredDistance()
+        log.debug("graph: just recomputed UD")
+        return newBranchCovered
     }
+
 
     private fun addEdgeWithWeight(from: Vert?, to: Vert?, weight: Int): Boolean {
         if ( from == null || to == null || weight<=-2  /*|| !from.successors.contains(to) */)
@@ -218,68 +314,81 @@ class StaticGraph(val cm: ClassManager, val enterPoint: Method) {
         return result
     }
 
-    fun recomputeUncoveredDistance() {
+    private fun recomputeUncoveredDistance() {
         val uncovered: MutableSet<Vert> = findUncovered()
-        for(vertex in uncovered){
+        val covered = vertices.filter { !uncovered.contains(it) }.toMutableSet()
+
+        val mapList = mutableListOf<MutableMap<Vert, Int>>()
+
+        for(vertex in uncovered) {
+            if(vertex == this.root) {
+                continue
+            }
+            //distances 4 everything that lies above our uncovered vertex
             val map = dijkstra(vertex)
-            var dist = Int.MAX_VALUE
-            var vert: Vert? = null
 
-            for(key: Vert in map.keys) {
-                if(uncovered.contains(key))
-                    continue
+            val uncoveredKeys = map.keys.filter{ uncovered.contains(it) }.toMutableSet()
+            uncoveredKeys.forEach { map.keys.remove(it) }
+            //here map shoul contain only covered vertices and distances to them from our uncovered vertex
 
-                if((key.terminateInst is BranchInst
-                                || key.terminateInst is SwitchInst
-                                || key.terminateInst is TableSwitchInst)
-                        && map[key]!! < dist) {
-                    dist = map[key]!!
-                    vert = key
+            var temp = map.keys.first()
+
+            map.keys.forEach {
+                if(it.uncoveredDistance >= map[it]!!) {
+                    it.uncoveredDistance = map[it]!!
+                    it.nearestUncovered = vertex
                 }
             }
-
-            if(vert != null) {
-                if(dist < vert.uncoveredDistance) {
-                    vert.uncoveredDistance = dist
-                    vert.nearestUncovered = vertex
-                }
-            }
-
         }
         return
     }
 
+    //generates Set<Vert> of everything that lies above v: Vert
+    private fun generateDijkstraSearchSet(v: Vert): MutableSet<Vert> {
+        val result = mutableSetOf<Vert>()
+        val next = mutableSetOf<Vert>()
+
+        var current = mutableSetOf<Vert>()
+        current.add(v)
+
+        while(current.isNotEmpty()) {
+
+            for(vertex in current) {
+                result.add(vertex)
+                next.addAll(vertex.predecessors)
+            }
+
+            current.addAll(next)
+            current = current.filter { !result.contains(it) }.toMutableSet()
+            next.removeAll(current)
+        }
+        current.remove(v)
+        return result
+    }
+
     private fun dijkstra(v: Vert): MutableMap<Vert, Int> {
-        val q = mutableSetOf<Vert>()
+        val q = mutableSetOf<Vert>()            //set of unvisited
         val map = mutableMapOf<Vert, Int >()
-        var u: Vert = v
+        var curr: Vert
 
         q.add(v)
-        v.uncoveredDistance = 0
-        map[v] = 0
 
-        for(vertex in vertices) {
-            if(vertex == v)
-                continue
-            q.add(vertex)
-            map[vertex] = Int.MAX_VALUE
-        }
+        val searchSet = generateDijkstraSearchSet(v)
+
+        q.addAll(searchSet)
+        q.forEach { map[it] = Int.MAX_VALUE }
 
         while (q.isNotEmpty()) {
-            for(vertex in q){
-                if(map[vertex]!! < map[u]!!)
-                    u = vertex
-            }
-            q.remove(u)
+            curr = q.first()
 
-            for(pred in u.predecessors) {
-                var alt = map[u]!! + pred.weights[u]!!
-
-                if(alt < map[pred]!!) {
-                    map[pred] = alt
-                    pred.prev = u
+            for(neighbor in curr.predecessors) {
+                val alt = map[curr]!! + neighbor.weights[curr]!!
+                if(map[neighbor]!! >= alt) {
+                    map[neighbor] = alt
+                    neighbor.prev = curr
                 }
             }
+            q.remove(curr)
         }
         return map
     }
@@ -296,7 +405,7 @@ class StaticGraph(val cm: ClassManager, val enterPoint: Method) {
         val result = mutableListOf<Vert>()
         var ud = Int.MAX_VALUE
 
-        //we're gettin a list containing all of the BlockActions in our trace
+        //we're gettin a list containing all of the BlockActions from our trace
         //vertices in failed Set will be ignored
         for(action in trace.actions) {
             if(action is BlockAction){
@@ -315,12 +424,19 @@ class StaticGraph(val cm: ClassManager, val enterPoint: Method) {
         //then we search for minimum UD among our branches
         val iterator = result.iterator()
         while(iterator.hasNext()) {
-            var vert = iterator.next()
+            val vert = iterator.next()
             if (!(vert.terminateInst is BranchInst
                             || vert.terminateInst is SwitchInst
                             || vert.terminateInst is TableSwitchInst)) {
                 iterator.remove()
                 continue
+            }
+            else {
+                log.debug("=============================================================================================")
+                log.debug("=============================================================================================")
+                log.debug("IM FINALLY DOING MY JOB")
+                log.debug("=============================================================================================")
+                log.debug("=============================================================================================")
             }
             if (vert.uncoveredDistance + vert.tries > ud)
                 iterator.remove()
