@@ -7,299 +7,154 @@ import org.jetbrains.research.kfg.ClassManager
 import org.jetbrains.research.kfg.ir.*
 import org.jetbrains.research.kfg.ir.value.instruction.*
 
+class StaticGraph(val cm: ClassManager, enterPoint: Method) {
 
-class StaticGraph(val cm: ClassManager, val enterPoint: Method) {
+    private val vertices = mutableSetOf<Vertex>()
+    private val traces = mutableSetOf<Trace>()
 
+    private fun findInGraph(instruction: Instruction): Vertex? {
+        if (isNotInGraph(instruction))
+            return null
+        return vertices.find { it.inst == instruction }
+    }
 
-    data class Vert(val bb: BasicBlock,
-                    val predecessors: MutableCollection<Vert>,
-                    val successors: MutableCollection<Vert>) {
+    private fun isInGraph(instruction: Instruction): Boolean =
+            Vert(instruction, mutableSetOf(), mutableSetOf()) in vertices
 
-        val weights: MutableMap<Vert, Int> = mutableMapOf()
-        var uncoveredDistance: Int = Int.MAX_VALUE
+    private fun isNotInGraph(instruction: Instruction): Boolean = !isInGraph(instruction)
 
-        var isCovered = false
-
-        var nearestCovered: Vert? = null //???
-        var nearestUncovered: Vert? = null //???
-
-        var prev: Vert? = null
-
-        var tries: Int = 0                                         //number of times branchWasNegated
-        val terminateInst = this.bb.terminator
-        var callInst: Instruction? = null
-
-        override fun hashCode(): Int {
-            return bb.hashCode()
+    private fun newVertexByInst(instruction: Instruction): Vertex = when (instruction) {
+        is TerminateInst -> {
+            TerminateVert(instruction, mutableSetOf(), mutableSetOf())
         }
+        is CallInst -> {
+            CallVert(instruction, mutableSetOf(), mutableSetOf())
+        }
+        else -> {
+            Vert(instruction, mutableSetOf(), mutableSetOf())
+        }
+    }
 
-        override fun equals(other: Any?): Boolean {
-            if (other is Vert)
-                return this.bb == other.bb
+    private fun addWeight(from: Vertex?, to: Vertex?, weight: Int): Boolean {
+        if (from == null || to == null || weight <= -2  /*|| !from.successors.contains(to) */)
             return false
-        }
-
-        override fun toString(): String {
-            return bb.toString()
-        }
+        from.weights[to] = weight
+        from.successors.add(to)
+        to.predecessors.add(from)
+        return true
     }
 
+    private fun wrapAndAddInst(inst: Instruction, predecessor: Vertex?): Vertex {
 
-    open val vertices: MutableCollection<Vert> = mutableSetOf()
+        val vert = findInGraph(inst) ?: newVertexByInst(inst)
+        vertices.add(vert)
 
-    private val traces: MutableCollection<Trace> = mutableSetOf()
+        if (predecessor == null)
+            return vert
+        vert.predecessors.add(predecessor)
 
-    val rootToLeaf = mutableMapOf<Vert, Vert>()
-    val leafToRoot
-        get() = rootToLeaf.entries.associate { (k, v) -> v to k }
-    var depth: Int = 0
-        private set
+        when (vert) {
+            is TerminateVert -> {
+                val isBranch = (vert.inst is BranchInst || vert.inst is SwitchInst || vert.inst is TableSwitchInst)
+                for (pred in vert.predecessors) {
+                    if (isBranch)
+                        addWeight(pred, vert, 1)
+                    else
+                        addWeight(pred, vert, 0)
+                }
 
+            }
+            is CallVert -> {
+                for (pred in vert.predecessors)
+                    addWeight(pred, vert, 0)
+            }
 
-    private fun isInGraph(block: BasicBlock): Vert? {
-        for(vertex in vertices) {
-            if(vertex.bb == block)
-                return vertex
+            is Vert -> {
+                for (pred in vert.predecessors)
+                    addWeight(pred, vert, 0)
+            }
         }
-        return null
+        return vert
     }
 
-    private fun wrapAndAddBlock(block: BasicBlock, predecessor: Vert?): Vert {
-        val pred = listOfNotNull(predecessor).toMutableSet()
-        var vert: Vert? = isInGraph(block)
+    private val rootMethod = enterPoint
+    private val root: Vertex
 
-        if(vert == null) {
-            vert = Vert(block, pred, mutableSetOf())
-        }
-/*
-        for(inst in block.instructions) {
-            if(inst is CallInst) {
-                val clonedVert = Vert(block, pred, mutableSetOf())
-                clonedVert.callInst = inst
-                addEdgeWithWeight(clonedVert, predecessor, 0)
-                vertices.add(vert)
-            }
-        }
- */
-        when (block.terminator) {
-            is BranchInst -> {
-                //log.debug("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
-                //log.debug("WOW< FOUND A BRANCHINST")
-                //log.debug("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
-
-                vert.predecessors.forEach { addEdgeWithWeight(it, vert, 1) }
-                vertices.add(vert)
-                for(successor in block.successors) {
-                    wrapAndAddBlock(successor, vert)
-                }
-                return vert
-            }
-
-            is SwitchInst -> {
-                //log.debug("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
-                //log.debug("WOW< FOUND A SWITCHINST")
-                //log.debug("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
-
-                vert.predecessors.forEach { addEdgeWithWeight(it, vert, 1) }
-                vertices.add(vert)
-                for(successor in block.successors){
-                    wrapAndAddBlock(successor, vert)
-                }
-                return vert
-            }
-
-            is TableSwitchInst -> {
-                //log.debug("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
-                //log.debug("WOW< FOUND A TABLESWITCHINST")
-                //log.debug("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
-
-                vert.predecessors.forEach { addEdgeWithWeight(it, vert, 1) }
-                vertices.add(vert)
-                for(successor in block.successors){
-                    wrapAndAddBlock(successor, vert)
-                }
-                return vert
-            }
-
-            else -> {
-                vert.predecessors.forEach { addEdgeWithWeight(it, vert, 0) }
-                vertices.add(vert)
-                return vert
-            }
-        }
-
-    }
-
-    private var rootMethod: Method
-    private var root: Vert
-
-    init {          //val cm: ClassManager, val enterPoint: Method
-
-        rootMethod = enterPoint
-        root = wrapAndAddBlock(rootMethod.entry, null)
-        vertices.add(root)
-
-        val concreteClasses = cm.concreteClasses
-        val allMethods: MutableSet<Method> = mutableSetOf()
-        concreteClasses.forEach { allMethods.addAll(it.allMethods) }
-
-        //root.bb.successors.forEach{ addBlocks(it, root) }
-
-        //commented line above was used in the previous version
-        //addBlocks was only adding 5 or 6 blocks into our graph and
-        // then it had thought its job was over
-
-        //new version is:
+    init {
+        val temp = rootMethod.entry.first()
+        root = wrapAndAddInst(temp, null)
         buildGraph(root)
-
-        //but it also contains some problems, that I haven't fixed yet
-        //the main problem is: I see NoSuchElementException being thrown
-        // from line 194 - "Collection contains no element matching the predicate."
-        // - buildGraph falls when its trying to get CallInst.method.entry. Y?
-
     }
 
-    private fun buildGraph(root: Vert) {
-        //vertices, which bb's successors should be added at current iteration
-        var current = mutableSetOf<Vert>()
-        current.add(root)
-        //next iteration
-        val next = mutableSetOf<Vert>()
+    private fun nextInst(instruction: Instruction): Instruction? {
+//        if(instruction is TerminateInst)
+//            return null
+        val iterator = instruction.parent.iterator()
+        var result: Instruction? = null
 
-        val visited = mutableSetOf<Vert>()
-
-        while(true) {
-
-            current = current.filter{ !visited.contains(it) }.toMutableSet()
-
-            if(current.isEmpty()) {
+        while (iterator.hasNext()) {
+            result = iterator.next()
+            if (result == instruction && iterator.hasNext()) {
+                result = iterator.next()
                 break
             }
-
-            //current stores vertices that are already in graph
-            // and here we are adding their bb's.successors to our graph
-            for(element: Vert in current) {
-                //element should be already added to the graph, and now we're adding its successors
-                for(block in element.bb.successors) {
-                    //this vert.successors will be added to our graph at the next iteration
-                    val vert = wrapAndAddBlock(block, element)
-                    next.add(vert)
-
-                }//for block in element ends
-
-                //callInst
-                //jumpInst
-                element.bb.instructions.forEach {
-                    if(it is CallInst) {
-                        val block = it.method.entry
-                        val vert = wrapAndAddBlock(block, element)
-                        next.add(vert)
-                    }
-
-                    if(it is JumpInst) {
-                        val block = it.successor
-                        val vert = wrapAndAddBlock(block, element)
-                        next.add(vert)
-                    }
-                }
-
-
-                visited.add(element)
-            }//for element in current ends
-
-            //preparing 4 the next iteration
-            current.removeAll(current)
-            current.addAll(next)
-            next.removeAll(next)
-
-        }//while true ends
-        return
+        }
+        return result
     }
 
+    private fun buildGraph(start: Vertex) {
+        var current = mutableSetOf<Vertex>()
+        current.add(start)
+        var next = mutableSetOf<Vertex>()
+        val visited = mutableSetOf<Vertex>()
 
-    private fun addBlocks(bb: BasicBlock, predecessor: Vert?) {
-        //wrapping the first block to start with non-null pred
-        var pred = wrapAndAddBlock(bb, predecessor)
-
-        //blocks to add during current iteration
-        val current = mutableMapOf<Vert, LinkedHashSet<BasicBlock>>()
-        //blocks to add during the next iteration
-        val next = mutableMapOf<Vert, LinkedHashSet<BasicBlock>>()
-
-        val visited = mutableSetOf<BasicBlock>()
-
-        current[pred] = pred.bb.successors
-        visited.add(pred.bb)
-
-        while(true) {
-            val currentIterator = current.keys.iterator()
-
-            while(currentIterator.hasNext()) {
-                val key = currentIterator.next()
-
-                //check if our vertex was already visited
-                if(visited.contains(key.bb) && key.bb != pred.bb && key.bb != predecessor?.bb) {
-                    currentIterator.remove()
-                    log.debug("GRAPH: addBlocks: removed an already visited element")
-                    continue
-                }
-
-                val value = current[key]
-                if(value.isNullOrEmpty()) {
-                    currentIterator.remove()
-                    continue
-                }
-
-                for(element in value) {
-                    val previous = wrapAndAddBlock(element, key)
-                    next[previous] = previous.bb.successors
-
-                    //putting another methods into next using CallInst's and JumpInst's succesors
-                    for(inst in element.instructions) {
-                        if(inst is CallInst && !inst.method.isEmpty()) {
-                            val temp = inst.method.entry
-                            if(next[previous].isNullOrEmpty())
-                                next[previous] = linkedSetOf(temp)
-                            else
-                                next[previous]?.add(temp)
-                        }
-
-                        else if(inst is JumpInst && !element.successors.contains(inst.successor)) {
-                            val temp = inst.successor
-                            if(next[previous].isNullOrEmpty())
-                                next[previous] = linkedSetOf(temp)
-                            else
-                                next[previous]?.add(temp)
-                        }
-
-                    }
-                    /*log.debug("block : $element")
-                    log.debug("successors : " + next[previous]) */
-                }
-                visited.add(key.bb)
-                currentIterator.remove()
-            }
-            //here current is supposed to be empty
-            current.putAll(next)
-            if(current.isEmpty())
+        while (true) {
+            current = current.filter { !visited.contains(it) }.toMutableSet()
+            if (current.isEmpty())
                 break
 
-            next.keys.removeAll(next.keys)
+            for (vertex in current) {
+                when (vertex) {
+                    is TerminateVert -> {
+                        val listWrapped = mutableListOf<Vertex>()
+                        for (successor in vertex.bb.successors) {
+                            if (successor.instructions.isNullOrEmpty())
+                                continue
+                            listWrapped.add(wrapAndAddInst(successor.instructions.first(), vertex))
+                        }
+                        next.addAll(listWrapped)
+                    }
+
+                    is CallVert -> {
+                        if (vertex.inst.method.isNotEmpty())
+                            next.add(wrapAndAddInst(vertex.inst.method.entry.first(), vertex))
+                        else {
+                            log.debug("Wrapping CallInst ${vertex.inst} method" +
+                                    "failed: method ${vertex.inst.method} is empty")
+                        }
+                    }
+
+                    else -> {
+                        val inst = nextInst(vertex.inst) ?: continue
+                        val wrapped = wrapAndAddInst(inst, vertex)
+                        next.add(wrapped)
+                    }
+                }
+                visited.add(vertex)
+            }//current loop ends
+
+            current = next
+            next = mutableSetOf()
         }
         return
     }
 
-
-    fun getTraces(): List<Trace> {
-        return traces.toList()
-    }
-
-    fun getTraces(depth: Int): List<Trace> {
-        return getTraces().filter { it.actions.size == depth }
-    }
+    fun getTraces() = traces.toList()
 
 
-    private fun bfsApply(start: Vert, func: (Vert) -> Unit) {
+    fun getTraces(depth: Int) = getTraces().filter { it.actions.size == depth }
+
+    private fun bfsApply(start: Vertex, func: (Vertex) -> Unit) {
         val queue = queueOf(start)
         while (queue.isNotEmpty()) {
             val curr = queue.poll()
@@ -308,104 +163,91 @@ class StaticGraph(val cm: ClassManager, val enterPoint: Method) {
         }
     }
 
-    private fun bfsFullApply(func: (Vert) -> Unit) {
-        val visited = mutableSetOf<Vert>()
-        val queue = queueOf(rootToLeaf.keys)
-        while (queue.isNotEmpty()) {
-            val curr = queue.poll()
-            if (curr in visited)
-                continue
-            func(curr)
-            visited.add(curr)
-            queue.addAll(curr.successors)
+    private fun bfsFullApply(func: (Vertex) -> Unit) = bfsApply(root, func)
+
+    fun Instruction.find() = vertices.find { it.inst == this }
+
+    fun Instruction.findExcept(foundVertices: Set<Vertex>) =
+            vertices.minus(foundVertices).find { (it as Vertex).inst == this }
+
+    private fun coverStaticPath(actions: List<Action>): Boolean {
+        var newBranchCovered = false
+        for (action in actions) {
+            var currentBlock: BasicBlock? = null
+
+            when (action) {
+                is MethodEntry -> {
+                    continue
+                }               //??
+                is MethodReturn -> {
+                    continue
+                }             //??
+                is MethodThrow -> {
+                    continue
+                }              //??
+                is MethodCall -> {
+                    if (currentBlock != null && currentBlock.isNotEmpty) {
+                        val temp = currentBlock.instructions.filterIsInstance<CallInst>()
+                        temp.forEach { it.find()?.isCovered = true }
+                    }
+                }
+                is StaticInitEntry -> {
+                    continue
+                }
+                is StaticInitExit -> {
+                    continue
+                }
+                is BlockEntry -> {
+                    currentBlock = action.block
+                    val vert = currentBlock.instructions.first().find()
+                    vert?.isCovered = true
+                }
+                is BlockJump -> {
+                    currentBlock = action.block
+                    val vert = currentBlock.terminator.find()
+                    vert?.isCovered = true
+                }
+                is BlockBranch -> {
+                    currentBlock = action.block
+                    val vert = currentBlock.terminator.find()
+                    vert?.isCovered = true
+                    newBranchCovered = true
+                }
+                is BlockSwitch -> {
+                    currentBlock = action.block
+                    val vert = currentBlock.terminator.find()
+                    vert?.isCovered = true
+                    newBranchCovered = true
+                }
+            }
         }
+        return newBranchCovered
     }
 
-    fun BasicBlock.find() = vertices.find { it.bb == this }
-
-    fun BasicBlock.findExcept(foundVertices: Set<Vert>) = vertices.minus(foundVertices).find { it.bb == this }
-
-    //adds a trace to our graph and
-    // returns true if it contains a previously uncovered branch
     fun addTrace(trace: Trace): Boolean {
         traces.add(trace)
-        log.debug("Graph: adding a trace")
-        var newBranchCovered = false
-        for(action in trace.actions)
-            for(vert in vertices)
-                if(actionEqualsBB(action, vert.bb))
-                    if(!vert.isCovered)
-                        when(vert.terminateInst) {
-                            is BranchInst -> {
-                                newBranchCovered = true
-                                vert.isCovered = true
-                            }
-                            is SwitchInst -> {
-                                newBranchCovered = true
-                                vert.isCovered = true
-                            }
-                            is TableSwitchInst -> {
-                                newBranchCovered = true
-                                vert.isCovered = true
-                            }
-                            else -> {
-                                vert.isCovered = true
-                            }
-                        }
+        val newBranchCovered = coverStaticPath(trace.actions)
+
         log.debug("graph: trace added successfully, recomputing UD")
         recomputeUncoveredDistance()
         log.debug("graph: just recomputed UD")
         return newBranchCovered
     }
 
-
-    private fun addEdgeWithWeight(from: Vert?, to: Vert?, weight: Int): Boolean {
-        if ( from == null || to == null || weight<=-2  /*|| !from.successors.contains(to) */)
-            return false
-        from.weights[to] = weight
-        from.successors.add(to)
-        to.predecessors.add(from)
-        return true
-    }
-
-    private fun actionEqualsBB(action: Action, bb: BasicBlock): Boolean {
-        if(action is BlockAction)
-            return action.block == bb
-        return false
-    }
-
-
-    private fun findUncovered(): MutableSet<Vert> {
-        val result: MutableSet<Vert> = mutableSetOf()
-
-        for(vertex in vertices) {
-            if(!vertex.isCovered)
-                result.add(vertex)
-        }
-        return result
-    }
+    private fun findUncovered(): MutableSet<Vertex> = vertices.filter { it.isCovered }.toMutableSet()
 
     private fun recomputeUncoveredDistance() {
-        val uncovered: MutableSet<Vert> = findUncovered()
-        val covered = vertices.filter { !uncovered.contains(it) }.toMutableSet()
+        val uncovered: MutableSet<Vertex> = findUncovered()
 
-        val mapList = mutableListOf<MutableMap<Vert, Int>>()
-
-        for(vertex in uncovered) {
-            if(vertex == this.root) {
+        for (vertex in uncovered) {
+            if (vertex == this.root)
                 continue
-            }
-            //distances 4 everything that lies above our uncovered vertex
             val map = dijkstra(vertex)
-
-            val uncoveredKeys = map.keys.filter{ uncovered.contains(it) }.toMutableSet()
+            val uncoveredKeys = map.keys.filter { uncovered.contains(it) }.toMutableSet()
             uncoveredKeys.forEach { map.keys.remove(it) }
-            //here map shoul contain only covered vertices and distances to them from our uncovered vertex
-
-            var temp = map.keys.first()
 
             map.keys.forEach {
-                if(it.uncoveredDistance >= map[it]!!) {
+                if (it.uncoveredDistance >= map[it]!!) {
                     it.uncoveredDistance = map[it]!!
                     it.nearestUncovered = vertex
                 }
@@ -414,47 +256,41 @@ class StaticGraph(val cm: ClassManager, val enterPoint: Method) {
         return
     }
 
-    //generates Set<Vert> of everything that lies above v: Vert
-    private fun generateDijkstraSearchSet(v: Vert): MutableSet<Vert> {
-        val result = mutableSetOf<Vert>()
-        val next = mutableSetOf<Vert>()
 
-        var current = mutableSetOf<Vert>()
+    private fun generateDijkstraSearchSet(v: Vertex): MutableSet<Vertex> {
+        val result = mutableSetOf<Vertex>()
+        var next = mutableSetOf<Vertex>()
+
+        var current = mutableSetOf<Vertex>()
         current.add(v)
-
-        while(current.isNotEmpty()) {
-
-            for(vertex in current) {
+        result.add(v)
+        while (current.isNotEmpty()) {
+            for (vertex in current) {
                 result.add(vertex)
                 next.addAll(vertex.predecessors)
             }
-
-            current.addAll(next)
-            current = current.filter { !result.contains(it) }.toMutableSet()
-            next.removeAll(current)
+            current = next.filter { !result.contains(it) }.toMutableSet()
+            next = mutableSetOf()
         }
         current.remove(v)
         return result
     }
 
-    private fun dijkstra(v: Vert): MutableMap<Vert, Int> {
-        val q = mutableSetOf<Vert>()            //set of unvisited
-        val map = mutableMapOf<Vert, Int >()
-        var curr: Vert
+    private fun dijkstra(v: Vertex): MutableMap<Vertex, Int> {
+        val q = mutableSetOf<Vertex>()            //set of unvisited
+        val map = mutableMapOf<Vertex, Int>()
+        var curr: Vertex
 
         q.add(v)
-
-        val searchSet = generateDijkstraSearchSet(v)
-
-        q.addAll(searchSet)
+        q.addAll(generateDijkstraSearchSet(v))
         q.forEach { map[it] = Int.MAX_VALUE }
 
         while (q.isNotEmpty()) {
             curr = q.first()
 
-            for(neighbor in curr.predecessors) {
+            for (neighbor in curr.predecessors) {
                 val alt = map[curr]!! + neighbor.weights[curr]!!
-                if(map[neighbor]!! >= alt) {
+                if (map[neighbor]!! >= alt) {
                     map[neighbor] = alt
                     neighbor.prev = curr
                 }
@@ -464,85 +300,63 @@ class StaticGraph(val cm: ClassManager, val enterPoint: Method) {
         return map
     }
 
-    private fun findVertByBB(bb: BasicBlock): Vert? {
-        for(vertex in vertices) {
-            if(vertex.bb == bb)
-                return vertex
+    //fun for editing our minUd set
+    private fun checkUD(set: MutableSet<Vertex>, vertex: Vertex, ud: Int): MutableSet<Vertex> {
+        if (vertex.uncoveredDistance == ud) {
+            set.add(vertex)
+            return set
         }
-        return null
+        if (vertex.uncoveredDistance < ud)
+            return mutableSetOf(vertex)
+
+        return set
     }
 
-    private fun findWithMinUD(trace: Trace, failed: MutableSet<Vert>): MutableList<Vert> {
-        val result = mutableListOf<Vert>()
+    private fun findWithMinUD(failed: MutableSet<Vertex>): MutableSet<Vertex> {
+        var result = mutableSetOf<Vertex>()
         var ud = Int.MAX_VALUE
 
-        //we're gettin a list containing all of the BlockActions from our trace
-        //vertices in failed Set will be ignored
-        for(action in trace.actions) {
-            if(action is BlockAction){
-                val vert = findVertByBB(action.block)
+        val covered = vertices.filter { it.isCovered && !failed.contains(it) }.toMutableSet()
 
-                if(vert != null && !failed.contains(vert)) {
-                    result.add(vert)
-                    if(vert.uncoveredDistance + vert.tries < ud )
-                        ud = vert.uncoveredDistance + vert.tries
-                }
-                else
+        for (vertex in covered)
+            when (vertex) {
+                is Vert -> {
                     continue
+                }
+                is CallVert -> {
+                    continue
+                }
+                is TerminateVert -> {
+                    result = when (vertex.inst) {
+                        is BranchInst -> {
+                            checkUD(result, vertex, ud)
+                        }
+                        is SwitchInst -> {
+                            checkUD(result, vertex, ud)
+                        }
+                        is TableSwitchInst -> {
+                            checkUD(result, vertex, ud)
+                        }
+                        else -> {
+                            continue
+                        }
+                    }
+                    if (result.size == 1)
+                        ud = result.first().uncoveredDistance
+                }
             }
-        }
-
-        //then we search for minimum UD among our branches
-        val iterator = result.iterator()
-        while(iterator.hasNext()) {
-            val vert = iterator.next()
-            if (!(vert.terminateInst is BranchInst
-                            || vert.terminateInst is SwitchInst
-                            || vert.terminateInst is TableSwitchInst)) {
-                iterator.remove()
-                continue
-            }
-            else {
-                log.debug("=============================================================================================")
-                log.debug("=============================================================================================")
-                log.debug("IM FINALLY DOING MY JOB")
-                log.debug("=============================================================================================")
-                log.debug("=============================================================================================")
-            }
-            if (vert.uncoveredDistance + vert.tries > ud)
-                iterator.remove()
-        }
         return result
     }
 
-    //returns a branch with min UncoveredDistance for a trace
-    fun findBranchForSAP(trace: Trace, failed: MutableSet<Vert>): Vert? {
-        val list = findWithMinUD(trace, failed)
-        if(list.isEmpty())
-            return null
-
-        return list[0]
-    }
-
-    //returns next branch according to our algorithm to be forced by cfgds
-    fun nextBranchToForce(failed: MutableSet<Vert>): Vert? {
-        var result: Vert? = null
-        for(trace in traces) {
-            val temp = findBranchForSAP(trace, failed) ?: continue
-            if(result == null)
-                result = temp
-            if(result.uncoveredDistance + result.tries > temp.uncoveredDistance + temp.tries)
-                result = temp
+    fun nextBranchToForce(failed: MutableSet<Vertex>): Vertex? {
+        val minUdSet = findWithMinUD(failed)
+        return if (minUdSet.isEmpty())
+            null
+        else {
+            minUdSet.first()
         }
-        return result
     }
 
-
-    fun dropTries() {
-        for (vertex in vertices) {
-            vertex.tries = 0
-        }
-        return
-    }
+    fun dropTries() = vertices.forEach { it.tries = 0 }
 
 }

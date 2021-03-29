@@ -83,10 +83,11 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
             runBlocking {
                 withTimeout(timeLimit) {
                     try {
-                        //val statistics = Statistics("CGS", method.toString(), 0, Duration.ZERO, 0)
-                        processCFGDS(method)
-                        //statistics.stopTimeMeasurement()
-                        //log.info(statistics.print())
+                        val statistics = Statistics("CGS", method.toString(), 0, Duration.ZERO, 0)
+                        processTree(method, statistics)
+                        //processCFGDS(method)
+                        statistics.stopTimeMeasurement()
+                        log.info(statistics.print())
                     } catch (e: TimeoutException) {
                         log.debug("Timeout on running $method")
                     }
@@ -338,7 +339,7 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
 
     private suspend fun processCFGDS(method: Method) {
         val graph = StaticGraph(cm, method)
-        cfgds(graph)
+        //cfgds(graph)
     }
 
     private fun getState(block: BasicBlock): PredicateState? {
@@ -375,6 +376,7 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
         return resultingTrace
     }
 
+/*
     private suspend fun searchAlongPath(graph: StaticGraph, trace: Trace,
                                         failed: MutableSet<StaticGraph.Vert>, ud: Int): Trace {
 
@@ -528,4 +530,6 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
         }
         finish(graph)
     }
+
+ */
 }
