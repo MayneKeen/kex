@@ -2,14 +2,16 @@ package org.jetbrains.research.kex.asm.analysis.concolic
 
 import com.abdullin.kthelper.collection.queueOf
 import com.abdullin.kthelper.logging.log
+import org.jetbrains.research.kex.state.predicate.path
 import org.jetbrains.research.kex.trace.`object`.*
 import org.jetbrains.research.kfg.ClassManager
 import org.jetbrains.research.kfg.ir.*
 import org.jetbrains.research.kfg.ir.value.instruction.*
 
-class StaticGraph(val cm: ClassManager, enterPoint: Method) {
+class StaticGraph(enterPoint: Method) {
 
-    private val vertices = mutableSetOf<Vertex>()
+    val vertices = mutableSetOf<Vertex>()
+
     private val traces = mutableSetOf<Trace>()
 
     private fun findInGraph(instruction: Instruction): Vertex? {
@@ -19,7 +21,7 @@ class StaticGraph(val cm: ClassManager, enterPoint: Method) {
     }
 
     private fun isInGraph(instruction: Instruction): Boolean =
-            Vert(instruction, mutableSetOf(), mutableSetOf()) in vertices
+        Vert(instruction, mutableSetOf(), mutableSetOf()) in vertices
 
     private fun isNotInGraph(instruction: Instruction): Boolean = !isInGraph(instruction)
 
@@ -77,12 +79,14 @@ class StaticGraph(val cm: ClassManager, enterPoint: Method) {
         return vert
     }
 
-    private val rootMethod = enterPoint
+    val rootMethod = enterPoint
     private val root: Vertex
 
     init {
         val temp = rootMethod.entry.first()
-        root = wrapAndAddInst(temp, null)
+        //root = wrapAndAddInst(temp, null)
+        root = newVertexByInst(temp)
+        vertices.add(root)
         buildGraph(root)
     }
 
@@ -129,8 +133,10 @@ class StaticGraph(val cm: ClassManager, enterPoint: Method) {
                         if (vertex.inst.method.isNotEmpty())
                             next.add(wrapAndAddInst(vertex.inst.method.entry.first(), vertex))
                         else {
-                            log.debug("Wrapping CallInst ${vertex.inst} method" +
-                                    "failed: method ${vertex.inst.method} is empty")
+                            log.debug(
+                                "Wrapping CallInst ${vertex.inst} method" +
+                                        "failed: method ${vertex.inst.method} is empty"
+                            )
                         }
                     }
 
@@ -151,7 +157,6 @@ class StaticGraph(val cm: ClassManager, enterPoint: Method) {
 
     fun getTraces() = traces.toList()
 
-
     fun getTraces(depth: Int) = getTraces().filter { it.actions.size == depth }
 
     private fun bfsApply(start: Vertex, func: (Vertex) -> Unit) {
@@ -168,7 +173,7 @@ class StaticGraph(val cm: ClassManager, enterPoint: Method) {
     fun Instruction.find() = vertices.find { it.inst == this }
 
     fun Instruction.findExcept(foundVertices: Set<Vertex>) =
-            vertices.minus(foundVertices).find { (it as Vertex).inst == this }
+        vertices.minus(foundVertices).find { it.inst == this }
 
     private fun coverStaticPath(actions: List<Action>): Boolean {
         var newBranchCovered = false
@@ -188,7 +193,8 @@ class StaticGraph(val cm: ClassManager, enterPoint: Method) {
                 is MethodCall -> {
                     if (currentBlock != null && currentBlock.isNotEmpty) {
                         val temp = currentBlock.instructions.filterIsInstance<CallInst>()
-                        temp.forEach { it.find()?.isCovered = true }
+                        temp.find { it.method == action.method }?.find()?.isCovered = true
+                        //temp.forEach { it.find()?.isCovered = true }
                     }
                 }
                 is StaticInitEntry -> {
@@ -256,7 +262,6 @@ class StaticGraph(val cm: ClassManager, enterPoint: Method) {
         return
     }
 
-
     private fun generateDijkstraSearchSet(v: Vertex): MutableSet<Vertex> {
         val result = mutableSetOf<Vertex>()
         var next = mutableSetOf<Vertex>()
@@ -302,13 +307,12 @@ class StaticGraph(val cm: ClassManager, enterPoint: Method) {
 
     //fun for editing our minUd set
     private fun checkUD(set: MutableSet<Vertex>, vertex: Vertex, ud: Int): MutableSet<Vertex> {
-        if (vertex.uncoveredDistance == ud) {
+        if (vertex.uncoveredDistance + vertex.tries == ud) {
             set.add(vertex)
             return set
         }
-        if (vertex.uncoveredDistance < ud)
+        if (vertex.uncoveredDistance + vertex.tries < ud)
             return mutableSetOf(vertex)
-
         return set
     }
 
@@ -342,7 +346,7 @@ class StaticGraph(val cm: ClassManager, enterPoint: Method) {
                         }
                     }
                     if (result.size == 1)
-                        ud = result.first().uncoveredDistance
+                        ud = result.first().uncoveredDistance + result.first().tries
                 }
             }
         return result
@@ -356,6 +360,51 @@ class StaticGraph(val cm: ClassManager, enterPoint: Method) {
             minUdSet.first()
         }
     }
+
+    fun findPathsForSAP(curr: Vertex, ud: Int): MutableList<MutableMap<Vertex, Vertex>> {
+        val paths = findPathsDFS(curr, ud, mutableMapOf(), mutableListOf())
+        val iterator = paths.iterator()
+        while (iterator.hasNext()) {
+            val path = iterator.next()
+            val uncoveredSet = path.values.filter { !it.isCovered }.toMutableSet()
+            if(uncoveredSet.isNullOrEmpty()){
+                iterator.remove()
+            }
+        }
+        return if(paths.isEmpty())
+            mutableListOf()
+        else paths
+
+    }
+
+    private fun findPathsDFS(curr: Vertex, ud: Int, path: MutableMap<Vertex, Vertex>,
+                     paths: MutableList<MutableMap<Vertex, Vertex>>): MutableList<MutableMap<Vertex, Vertex>> {
+        var updatedPaths = paths
+
+        if (curr.successors.isEmpty()) {
+            if(path.isEmpty())
+                return updatedPaths
+
+            updatedPaths.add(path)
+            return updatedPaths
+        }
+
+        for (successor in curr.successors) {
+            val dist = ud - curr.weights[successor]!!
+            if(dist < 0) {
+                return updatedPaths
+            }
+
+            val newPath = mutableMapOf<Vertex, Vertex>()
+            newPath.putAll(path)
+            newPath[curr] = successor
+
+            updatedPaths = findPathsDFS(successor, dist, newPath, updatedPaths)
+            //return updatedPaths
+        }
+        return updatedPaths
+    }
+
 
     fun dropTries() = vertices.forEach { it.tries = 0 }
 

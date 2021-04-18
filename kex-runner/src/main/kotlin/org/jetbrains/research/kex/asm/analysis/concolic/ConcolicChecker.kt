@@ -29,6 +29,8 @@ import org.jetbrains.research.kfg.ClassManager
 import org.jetbrains.research.kfg.ir.BasicBlock
 import org.jetbrains.research.kfg.ir.Method
 import org.jetbrains.research.kfg.ir.value.Value
+import org.jetbrains.research.kfg.ir.value.instruction.CallInst
+import org.jetbrains.research.kfg.ir.value.instruction.Instruction
 import org.jetbrains.research.kfg.visitor.MethodVisitor
 import java.time.Duration
 import java.time.temporal.ChronoUnit
@@ -83,11 +85,11 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
             runBlocking {
                 withTimeout(timeLimit) {
                     try {
-                        val statistics = Statistics("CGS", method.toString(), 0, Duration.ZERO, 0)
-                        processTree(method, statistics)
-                        //processCFGDS(method)
-                        statistics.stopTimeMeasurement()
-                        log.info(statistics.print())
+                        //val statistics = Statistics("CGS", method.toString(), 0, Duration.ZERO, 0)
+                        //processTree(method, statistics)
+                        processCFGDS(method)
+                        //statistics.stopTimeMeasurement()
+                        //log.info(statistics.print())
                     } catch (e: TimeoutException) {
                         log.debug("Timeout on running $method")
                     }
@@ -163,15 +165,8 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
                     val prevBlock = prevBlockStack.pop()
                     val current = action.block
                     val next = filteredTrace.getOrNull(index + 1) as? BlockAction
-                    //try {
                     builder.build(current, prevBlock.block, next?.block)
                     methodStack.pop()
-                    //}
-                    /*catch (e: java.util.NoSuchElementException) {
-                        print(e.stackTrace)
-                        throw e
-                    }*/
-
                     builder.exitMethod(action.method)
                 }
                 is MethodCall -> {
@@ -338,7 +333,7 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
     }
 
     private suspend fun processCFGDS(method: Method) {
-        val graph = StaticGraph(cm, method)
+        val graph = StaticGraph(method)
         //cfgds(graph)
     }
 
@@ -348,6 +343,7 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
         return builder.getInstructionState(block.terminator)
     }
 
+    //contains no problems
     private suspend fun execute(method: Method, trace: Trace, ps: PredicateState): Trace? {
         //val state = buildState(method, trace)
         //state += ps?
@@ -376,47 +372,124 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
         return resultingTrace
     }
 
-/*
-    private suspend fun searchAlongPath(graph: StaticGraph, trace: Trace,
-                                        failed: MutableSet<StaticGraph.Vert>, ud: Int): Trace {
 
-        var branch = graph.findBranchForSAP(trace, failed)
-        var tempTrace: Trace?
-        var lastSuccessful = trace
-        var failedIterations = 0  //in a row
+    private fun traceToSetVertex(graph: StaticGraph, trace: Trace): MutableSet<Vertex> {
+        fun Instruction.find() = graph.vertices.find {it.inst == this}
 
-        while (branch != null
-                && (branch.uncoveredDistance + branch.tries <= ud) ) {
+        val set = mutableSetOf<Vertex>()
 
-            branch.tries +=1
-            val ps = getState(branch.bb) ?: return lastSuccessful
-            tempTrace = execute(graph.enterPoint, lastSuccessful, ps)
-            //yield()
+        for (action in trace.actions) {
+            var currentBlock: BasicBlock? = null
 
-            if (tempTrace == null || tempTrace.actions.isEmpty()) {
-                log.debug("Could not process trace for branch $branch")
-                failed.add(branch)
-                failedIterations++
-                branch = graph.findBranchForSAP(lastSuccessful, failed)
-                continue
+            when (action) {
+                is MethodEntry -> {
+                    continue
+                }               //??
+                is MethodReturn -> {
+                    continue
+                }             //??
+                is MethodThrow -> {
+                    continue
+                }              //??
+                is MethodCall -> {
+                    if (currentBlock != null && currentBlock.isNotEmpty) {
+                        val temp = currentBlock.instructions.filterIsInstance<CallInst>()
+                        val vert = temp.find { it.method == action.method }?.find()?: continue
+                        set.add(vert)
+                        continue
+                    }
+                }
+                is StaticInitEntry -> {
+                    continue
+                }
+                is StaticInitExit -> {
+                    continue
+                }
+                is BlockEntry -> {
+                    currentBlock = action.block
+                    val vert = currentBlock.instructions.first().find()?: continue
+                    set.add(vert)
+                    continue
+                }
+                is BlockJump -> {
+                    currentBlock = action.block
+                    val vert = currentBlock.terminator.find()?: continue
+                    set.add(vert)
+                    continue
+                }
+                is BlockBranch -> {
+                    currentBlock = action.block
+                    val vert = currentBlock.terminator.find()?: continue
+                    set.add(vert)
+                }
+                is BlockSwitch -> {
+                    currentBlock = action.block
+                    val vert = currentBlock.terminator.find()?: continue
+                    set.add(vert)
+                }
             }
-            failedIterations = 0
-            lastSuccessful = tempTrace
-
-            val newBranchCovered = graph.addTrace(lastSuccessful)
-            if(!newBranchCovered) {
-                failedIterations++
-                log.debug("SAP: Processing trace was successful, but no new branches are covered")
-            }
-
-            if(failedIterations > 20) {
-                log.debug("SAP: too many failed iterations in a row")
-                break
-            }
-            branch = graph.findBranchForSAP(tempTrace, failed)
         }
-        log.debug("SearchAlongPath finished, returning to CFGDS")
-        return lastSuccessful
+        return set
+    }
+
+    private suspend fun searchAlongPath(graph: StaticGraph, trace: Trace, path: MutableMap<Vertex, Vertex>,
+                                        failed: MutableSet<Vertex>, ud: Int): Trace? {
+        //1)path.foreach(trace.actions.contains(it)) -> find mismatch as path[i]
+        //2)if we didnt found mismatch return lastTrace
+        //3)else force prev as path[i-1] -> tempTrace
+        //  4)if forcing succeed lastTrace = tempTrace
+        //  5)else
+        //fun Instruction.find() = graph.vertices.find {it.inst == this}
+        var lastTrace = trace
+
+        while(true){
+            var mismatch: Vertex? = null
+
+            val set = traceToSetVertex(graph, lastTrace)
+            var numberMatched = 0
+            for(vert in path.values) {
+                if(set.contains(vert)) {
+                    numberMatched++
+                    continue
+                }
+                else {
+                    mismatch = vert
+                    break
+                }
+            }
+
+            if(mismatch == null)
+                return if(numberMatched>0)
+                    lastTrace
+                else null
+
+            val ps = getState(mismatch.bb)  //???? should we force mismatch.predecessor.bb instead?
+            mismatch.tries++
+
+            if(ps == null || ps.isEmpty) {
+                log.debug("SAP: could not generate a predicateState")
+                failed.add(mismatch)       //same as above
+                return if(numberMatched>0)
+                    lastTrace
+                else null
+            }
+
+            val tempTrace = execute(graph.rootMethod, lastTrace, ps)
+            yield()
+            if(tempTrace == null || tempTrace.actions.isNullOrEmpty())  {
+                log.debug("SAP: could not process a trace...")
+                failed.add(mismatch)       //same as above
+                return if(numberMatched>0)
+                    lastTrace
+                else null
+            }
+
+            lastTrace = tempTrace
+            graph.addTrace(lastTrace)
+
+            log.debug("SAP: an iteration of sap worked correctly")
+            continue
+        }
 
     }
 
@@ -425,7 +498,8 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
     //test iterations, or if it uncovers no new branches after some
     //set number of iterations.
 
-    private fun finish(graph: StaticGraph) {
+
+    private suspend fun finish(graph: StaticGraph) {
         log.debug("Finishing the search")
 
         val count = graph.vertices.size.toDouble()
@@ -441,7 +515,8 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
         log.debug("Total static graph coverage is $graphCoverage %")
         log.debug(graph.vertices.toString())
         log.debug("========================================================")
-        exitProcess(0)
+        yield()
+        //exitProcess(0)
 
         //something about finishing our search and printing stats or smth like that
         //do we need this?
@@ -449,34 +524,18 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
 
     suspend fun cfgds(graph: StaticGraph) {
 
-        var lastTrace = getRandomTraceUntilSuccess(graph.enterPoint)
+        var lastTrace = getRandomTraceUntilSuccess(graph.rootMethod)
         yield()
-        val failedToForce = mutableSetOf<StaticGraph.Vert>()
-
-        val candidates = mutableSetOf<StaticGraph.Vert>() //????
-        var failedIterations: Int = 0  //????
+        val failedToForce = mutableSetOf<Vertex>()
+        var failedIterations = 0
 
         while (true) {
             log.debug("another iteration of CFGDS")
 
-            var newBranchCovered = graph.addTrace(lastTrace)
+            //graph.dropTries()
 
-            if(!newBranchCovered) {
-                failedIterations++
-                log.debug("CFGDS: Processing trace was successful, but no new branches are covered")
-            }
-
-            //graph.dropTries() //?
-
-            log.debug("searching for a branch to force...")
-            var found = graph.nextBranchToForce(failedToForce)
-            log.debug("found a branch")
-
-
-            if(failedIterations > 20) {
-                log.debug("CFGDS: too many failed iterations in a row, exiting")
-                break
-            }
+            log.debug("CFGDS: Searching for a branch to force...")
+            val found = graph.nextBranchToForce(failedToForce)
 
             if (found == null) {
                 failedIterations++
@@ -484,52 +543,91 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
                 continue
                 //break
             }
+
+            log.debug("found a branch")
+
+
             //here we should have checked if there were any covered branches
             // and finish our search in case there weren't
             // after some set number of iterations
 
             val branch = found.bb
 
-            val ps: PredicateState? = getState(branch)
-            found.tries += 1
+            val ps = getState(branch)
+            found.tries++
 
             if (ps == null || ps.isEmpty) {
                 log.debug("Could not generate a PredicateState for block $branch")
-                failedToForce.add(found)
                 failedIterations++
+                failedToForce.add(found)
                 continue
             }
 
-            var tempTrace = execute(graph.enterPoint, lastTrace, ps)
-            //yield()
+            val tempTrace = execute(graph.rootMethod, lastTrace, ps)
+            yield()
             log.debug("just generated a trace")
 
-            if(tempTrace == null || tempTrace.actions.isEmpty()) {
+            if(tempTrace == null || tempTrace.actions.isNullOrEmpty()) {
                 log.debug("Could not process a trace for branch $branch")
                 failedIterations++
                 failedToForce.add(found)
                 continue
             }
-
             lastTrace = tempTrace
-            failedIterations = 0
 
-            newBranchCovered = graph.addTrace(lastTrace)
+            val newBranchCovered = graph.addTrace(lastTrace)
+
             if(!newBranchCovered) {
                 failedIterations++
-                log.debug("CFGDS: Processing trace was successful, but no new branches are covered")
+                failedToForce.add(found)
+                log.debug("CFGDS: Processing a trace was successful, but no new branches are covered")
+            }
+            else {
+                failedIterations = 0
+            }
+            if(failedIterations > 20) {
+                log.debug("CFGDS: too many failed iterations in a row, exiting")
+                break
             }
 
             val ud = found.uncoveredDistance + found.tries
             log.debug("entering searchAlongPath")
-            var trace = searchAlongPath(graph, lastTrace, failedToForce, ud)
-            //yield()
-            lastTrace = trace
 
+            val pathList = graph.findPathsForSAP(found, ud)
+            yield()
+
+            if(pathList.isEmpty()) {
+                log.debug("No path found for SAP, continuing")
+                found.tries+=1
+                continue
+            }
+
+            var sapSucceed = false
+
+            for(path in pathList) {
+                val trace = searchAlongPath(graph, lastTrace, path, failedToForce, ud)
+                yield()
+                if(trace==null || trace.actions.isNullOrEmpty()) {
+                    log.debug("SAP: did not succeed on current iteration")
+                    continue
+                }
+                sapSucceed = true
+                lastTrace = trace
+                break
+            }
+
+            if(!sapSucceed){
+                found.tries++
+                continue
+            }
+            else {
+                graph.addTrace(lastTrace)
+                graph.dropTries()
+            }
             log.debug("SearchAlongPath finished, trying to force a new branch in CFGDS")
         }
         finish(graph)
     }
 
- */
+
 }
