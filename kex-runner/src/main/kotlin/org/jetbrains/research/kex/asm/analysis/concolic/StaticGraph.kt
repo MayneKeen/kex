@@ -84,11 +84,13 @@ class StaticGraph(enterPoint: Method) {
 
     init {
         val temp = rootMethod.entry.first()
-        //root = wrapAndAddInst(temp, null)
-        root = newVertexByInst(temp)
+        root = wrapAndAddInst(temp, null)
+        //root = newVertexByInst(temp)
         vertices.add(root)
         buildGraph(root)
     }
+
+
 
     private fun nextInst(instruction: Instruction): Instruction? {
 //        if(instruction is TerminateInst)
@@ -121,7 +123,8 @@ class StaticGraph(enterPoint: Method) {
                 when (vertex) {
                     is TerminateVert -> {
                         val listWrapped = mutableListOf<Vertex>()
-                        for (successor in vertex.bb.successors) {
+                        //for (successor in vertex.bb.successors) {
+                        for (successor in vertex.inst.parent.successors) {
                             if (successor.instructions.isNullOrEmpty())
                                 continue
                             listWrapped.add(wrapAndAddInst(successor.instructions.first(), vertex))
@@ -134,8 +137,9 @@ class StaticGraph(enterPoint: Method) {
                             next.add(wrapAndAddInst(vertex.inst.method.entry.first(), vertex))
                         else {
                             log.debug(
-                                "Wrapping CallInst ${vertex.inst} method" +
-                                        "failed: method ${vertex.inst.method} is empty"
+                                /*"Wrapping CallInst ${vertex.inst} method" +
+                                        "failed: method ${vertex.inst.method} is empty"*/
+                            "Wrapping CallInst failed: method is empty"
                             )
                         }
                     }
@@ -317,10 +321,13 @@ class StaticGraph(enterPoint: Method) {
     }
 
     private fun findWithMinUD(failed: MutableSet<Vertex>): MutableSet<Vertex> {
+        log.debug("++++++++++++++++++++FINDMINUD")
         var result = mutableSetOf<Vertex>()
         var ud = Int.MAX_VALUE
 
         val covered = vertices.filter { it.isCovered && !failed.contains(it) }.toMutableSet()
+
+        log.debug("++++++++++++++++++++)" + covered.size)
 
         for (vertex in covered)
             when (vertex) {

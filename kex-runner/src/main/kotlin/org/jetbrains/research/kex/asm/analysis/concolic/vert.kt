@@ -1,5 +1,6 @@
 package org.jetbrains.research.kex.asm.analysis.concolic
 
+import org.jetbrains.research.kfg.ir.BasicBlock
 import org.jetbrains.research.kfg.ir.value.instruction.*
 
 sealed class Vertex (open val inst: Instruction,
@@ -12,16 +13,17 @@ sealed class Vertex (open val inst: Instruction,
     var nearestUncovered: Vertex? = null //???
     var prev: Vertex? = null
     var tries = 0
-    val bb = this.inst.parent
+    //val bb = this.inst.parent
 
     override fun hashCode(): Int {
-        return (bb.hashCode() + inst.hashCode())
+        return (/*bb.hashCode() */inst.parent.hashCode() + inst.hashCode())
     }
 
     override fun equals(other: Any?): Boolean {
-        if (other is Vertex)
-            return (this.bb == other.bb && this.inst == other.inst)
-        return false
+        return if (other is Vertex)
+             //this.bb == other.bb && this.inst == other.inst
+             this.inst.parent == other.inst.parent && this.inst == other.inst
+        else false
     }
 
     override fun toString(): String {

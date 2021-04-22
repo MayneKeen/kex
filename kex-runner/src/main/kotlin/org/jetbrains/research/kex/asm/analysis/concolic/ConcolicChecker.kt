@@ -334,7 +334,7 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
 
     private suspend fun processCFGDS(method: Method) {
         val graph = StaticGraph(method)
-        //cfgds(graph)
+        cfgds(graph)
     }
 
     private fun getState(block: BasicBlock): PredicateState? {
@@ -463,7 +463,8 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
                     lastTrace
                 else null
 
-            val ps = getState(mismatch.bb)  //???? should we force mismatch.predecessor.bb instead?
+            //val ps = getState(mismatch.bb)  //???? should we force mismatch.predecessor.bb instead?
+            val ps = getState(mismatch.inst.parent)
             mismatch.tries++
 
             if(ps == null || ps.isEmpty) {
@@ -513,7 +514,7 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
         var graphCoverage: Double = (covered/count).toDouble() * 100
         log.debug("========================================================")
         log.debug("Total static graph coverage is $graphCoverage %")
-        log.debug(graph.vertices.toString())
+        //log.debug(graph.vertices.toString())
         log.debug("========================================================")
         yield()
         //exitProcess(0)
@@ -530,6 +531,12 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
         var failedIterations = 0
 
         while (true) {
+
+            if(failedIterations > 20) {
+                log.debug("CFGDS: too many failed iterations in a row, exiting")
+                break
+            }
+
             log.debug("another iteration of CFGDS")
 
             //graph.dropTries()
@@ -544,6 +551,8 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
                 //break
             }
 
+
+
             log.debug("found a branch")
 
 
@@ -551,7 +560,8 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
             // and finish our search in case there weren't
             // after some set number of iterations
 
-            val branch = found.bb
+            //val branch = found.bb
+            val branch = found.inst.parent
 
             val ps = getState(branch)
             found.tries++
