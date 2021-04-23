@@ -1,9 +1,9 @@
 package org.jetbrains.research.kex.asm.analysis.concolic
 
-import com.abdullin.kthelper.collection.firstOrElse
-import com.abdullin.kthelper.collection.stackOf
-import com.abdullin.kthelper.logging.log
-import com.abdullin.kthelper.tryOrNull
+import org.jetbrains.research.kthelper.collection.firstOrElse
+import org.jetbrains.research.kthelper.collection.stackOf
+import org.jetbrains.research.kthelper.logging.log
+import org.jetbrains.research.kthelper.tryOrNull
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -12,6 +12,8 @@ import org.jetbrains.research.kex.ExecutionContext
 import org.jetbrains.research.kex.asm.state.PredicateStateAnalysis
 import org.jetbrains.research.kex.config.kexConfig
 import org.jetbrains.research.kex.random.Randomizer
+import org.jetbrains.research.kex.reanimator.ParameterGenerator
+import org.jetbrains.research.kex.reanimator.Reanimator
 import org.jetbrains.research.kex.smt.Checker
 import org.jetbrains.research.kex.smt.Result
 import org.jetbrains.research.kex.state.PredicateState
@@ -32,72 +34,49 @@ import org.jetbrains.research.kfg.ir.value.Value
 import org.jetbrains.research.kfg.ir.value.instruction.CallInst
 import org.jetbrains.research.kfg.ir.value.instruction.Instruction
 import org.jetbrains.research.kfg.visitor.MethodVisitor
-import java.time.Duration
-import java.time.temporal.ChronoUnit
 import java.util.*
-import kotlin.NoSuchElementException
-import kotlin.system.exitProcess
-
-
-//Added CGS by AndreyBychkov https://github.com/AndreyBychkov
 
 private val timeLimit by lazy { kexConfig.getLongValue("concolic", "timeLimit", 10000L) }
 private val onlyMain by lazy { kexConfig.getBooleanValue("concolic", "main-only", false) }
 
-class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace>) : MethodVisitor {
+class ConcolicChecker(
+    val ctx: ExecutionContext,
+    val psa: PredicateStateAnalysis,
+    private val manager: TraceManager<Trace>
+) : MethodVisitor {
     override val cm: ClassManager get() = ctx.cm
     val loader: ClassLoader get() = ctx.loader
     val random: Randomizer get() = ctx.random
-    val paths = mutableSetOf<PredicateState>()
-
+    private val paths = mutableSetOf<PredicateState>()
+    private var counter = 0
+    lateinit var generator: ParameterGenerator
+        protected set
 
     override fun cleanup() {
         paths.clear()
     }
 
-/*
-    private fun analyze(method: Method) {
-        log.debug(method.print())
-        try {
-            runBlocking {
-                withTimeout(timeLimit) {
-                    try {
-                        val statistics = Statistics("CGS", method.toString(), 0, Duration.ZERO, 0)
-                        processTree(method, statistics)
-                        statistics.stopTimeMeasurement()
-                        log.info(statistics.print())
-                    } catch (e: TimeoutException) {
-                        log.debug("Timeout on running $method")
-                    }
-                }
-            }
-        } catch (e: TimeoutCancellationException) {
-            return
-        }
+    private fun initializeGenerator(method: Method) {
+        generator = Reanimator(ctx, psa, method)
     }
 
- */
-
-
     private fun analyze(method: Method) {
         log.debug(method.print())
+        initializeGenerator(method)
         try {
             runBlocking {
                 withTimeout(timeLimit) {
                     try {
-                        //val statistics = Statistics("CGS", method.toString(), 0, Duration.ZERO, 0)
-                        //processTree(method, statistics)
-                        processCFGDS(method)
-                        //statistics.stopTimeMeasurement()
-                        //log.info(statistics.print())
+                        process(method)
                     } catch (e: TimeoutException) {
                         log.debug("Timeout on running $method")
                     }
                 }
             }
         } catch (e: TimeoutCancellationException) {
-            return
+            log.debug("Processing of method $method is stopped due timeout")
         }
+        generator.emit()
     }
 
     override fun visit(method: Method) {
@@ -105,53 +84,40 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
 
         if ((onlyMain && method.name == "main") || !onlyMain) {
             analyze(method)
-            print("")
         }
     }
 
     private fun buildState(method: Method, trace: Trace): PredicateState {
         data class BlockWrapper(val block: BasicBlock?)
-        data class CallParams(val method: Method, val receiver: Value?, val instance: Value?, val args: Array<Value>)
 
         fun BasicBlock.wrap() = BlockWrapper(this)
 
         val methodStack = stackOf<Method>()
         val prevBlockStack = stackOf<BlockWrapper>()
-        val filteredTrace = trace.actions.dropWhile { !(it is MethodEntry && it.method == method) }.run {
-            var inStatic = false
+        val filteredTrace = trace.actions.run {
+            var staticLevel = 0
             filter {
                 when (it) {
                     is StaticInitEntry -> {
-                        inStatic = true
+                        ++staticLevel
                         false
                     }
                     is StaticInitExit -> {
-                        inStatic = false
+                        --staticLevel
                         false
                     }
-                    else -> !inStatic
+                    else -> staticLevel == 0
                 }
             }
-        }
+        }.dropWhile { !(it is MethodEntry && it.method == method) }
 
-        val builder = ConcolicStateBuilder(cm)
-        var methodParams: CallParams? = null
+        val builder = ConcolicStateBuilder(cm, psa)
         for ((index, action) in filteredTrace.withIndex()) {
             when (action) {
                 is MethodEntry -> {
                     methodStack.push(action.method)
                     prevBlockStack.push(BlockWrapper(null))
-                    if (methodParams != null && methodParams.method == action.method) {
-                        val mappings = mutableMapOf<Value, Value>()
-                        methodParams.instance?.run { mappings[values.getThis(action.method.`class`)] = this }
-                        methodParams.args.withIndex().forEach { (index, arg) ->
-                            mappings[values.getArgument(index, action.method, action.method.argTypes[index])] = arg
-                        }
-                        builder.enterMethod(action.method, ConcolicStateBuilder.CallParameters(methodParams.receiver, mappings))
-                    } else {
-                        builder.enterMethod(action.method)
-                    }
-                    methodParams = null
+                    builder.enterMethod(action.method)
                 }
                 is MethodReturn -> {
                     val prevBlock = prevBlockStack.pop()
@@ -170,7 +136,12 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
                     builder.exitMethod(action.method)
                 }
                 is MethodCall -> {
-                    methodParams = CallParams(action.method, action.returnValue, action.instance, action.args)
+                    val mappings = mutableMapOf<Value, Value>()
+                    action.instance?.run { mappings[values.getThis(action.method.`class`)] = this }
+                    action.args.withIndex().forEach { (index, arg) ->
+                        mappings[values.getArgument(index, action.method, action.method.argTypes[index])] = arg
+                    }
+                    builder.callMethod(action.method, ConcolicStateBuilder.CallParameters(action.returnValue, mappings))
                 }
 
                 is BlockJump -> {
@@ -230,27 +201,23 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
         return currentState.apply()
     }
 
-    private fun collectTrace(method: Method, instance: Any?, args: Array<Any?>): Trace {
+    private fun collectTrace(method: Method, instance: Any?, args: List<Any?>): Trace {
         val runner = ObjectTracingRunner(method, loader)
-        return runner.collectTrace(instance, args)
+        return runner.collectTrace(instance, args.toTypedArray())
     }
 
-    private fun getRandomTrace(method: Method) = RandomObjectTracingRunner(method, loader, ctx.random).run()
+    private fun getRandomTrace(method: Method) =
+        tryOrNull { RandomObjectTracingRunner(method, loader, ctx.random).run() }
 
-    private suspend fun process(method: Method, statistics: Statistics) {
+    private suspend fun process(method: Method) {
         val traces = ArrayDeque<Trace>()
         while (!manager.isBodyCovered(method)) {
-            val candidate = traces.firstOrElse {
-                statistics.iterations += 1
-                getRandomTrace(method)?.also { manager[method] = it }
-            } ?: return
+            val candidate = traces.firstOrElse { getRandomTrace(method)?.also { manager[method] = it } } ?: return
             yield()
 
-            statistics.iterations += 1
             run(method, candidate)?.also {
                 manager[method] = it
                 traces.add(it)
-                statistics.satNum += 1
             }
             yield()
         }
@@ -277,19 +244,19 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
             }
 
             tb.asSequence()
-                    .filter { (_, branch) -> branch.context(contextLevel) !in contextCache }
-                    .forEach { (candidate, branch) ->
-                        statistics.iterations += 1
-                        run(method, candidate)?.also {
-                            manager[method] = it
-                            traces.addTrace(it)
-                            statistics.satNum += 1
-                        }
-                        manager[method] = candidate
-                        contextCache.add(branch.context(contextLevel))
-                        visitedBranches.add(traces.toBranch(candidate))
-                        yield()
+                .filter { (_, branch) -> branch.context(contextLevel) !in contextCache }
+                .forEach { (candidate, branch) ->
+                    statistics.iterations += 1
+                    run(method, candidate)?.also {
+                        manager[method] = it
+                        traces.addTrace(it)
+                        statistics.satNum += 1
                     }
+                    manager[method] = candidate
+                    contextCache.add(branch.context(contextLevel))
+                    visitedBranches.add(traces.toBranch(candidate))
+                    yield()
+                }
             contextLevel += 1
             yield()
         }
@@ -315,14 +282,13 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
         log.debug("Collected trace: $state")
         log.debug("Mutated trace: $mutated")
 
-        val psa = PredicateStateAnalysis(cm)
         val checker = Checker(method, loader, psa)
         val result = checker.prepareAndCheck(mutated)
         if (result !is Result.SatResult) return null
         yield()
 
         val (instance, args) = tryOrNull {
-            generateInputByModel(ctx, method, checker.state, result.model)
+            generator.generate("test${++counter}", method, checker.state, result.model)
         } ?: return null
         yield()
 
@@ -372,9 +338,8 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
         return resultingTrace
     }
 
-
     private fun traceToSetVertex(graph: StaticGraph, trace: Trace): MutableSet<Vertex> {
-        fun Instruction.find() = graph.vertices.find {it.inst == this}
+        fun Instruction.find() = graph.vertices.find { it.inst == this }
 
         val set = mutableSetOf<Vertex>()
 
@@ -394,7 +359,7 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
                 is MethodCall -> {
                     if (currentBlock != null && currentBlock.isNotEmpty) {
                         val temp = currentBlock.instructions.filterIsInstance<CallInst>()
-                        val vert = temp.find { it.method == action.method }?.find()?: continue
+                        val vert = temp.find { it.method == action.method }?.find() ?: continue
                         set.add(vert)
                         continue
                     }
@@ -407,24 +372,24 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
                 }
                 is BlockEntry -> {
                     currentBlock = action.block
-                    val vert = currentBlock.instructions.first().find()?: continue
+                    val vert = currentBlock.instructions.first().find() ?: continue
                     set.add(vert)
                     continue
                 }
                 is BlockJump -> {
                     currentBlock = action.block
-                    val vert = currentBlock.terminator.find()?: continue
+                    val vert = currentBlock.terminator.find() ?: continue
                     set.add(vert)
                     continue
                 }
                 is BlockBranch -> {
                     currentBlock = action.block
-                    val vert = currentBlock.terminator.find()?: continue
+                    val vert = currentBlock.terminator.find() ?: continue
                     set.add(vert)
                 }
                 is BlockSwitch -> {
                     currentBlock = action.block
-                    val vert = currentBlock.terminator.find()?: continue
+                    val vert = currentBlock.terminator.find() ?: continue
                     set.add(vert)
                 }
             }
@@ -432,8 +397,10 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
         return set
     }
 
-    private suspend fun searchAlongPath(graph: StaticGraph, trace: Trace, path: MutableMap<Vertex, Vertex>,
-                                        failed: MutableSet<Vertex>, ud: Int): Trace? {
+    private suspend fun searchAlongPath(
+        graph: StaticGraph, trace: Trace, path: MutableMap<Vertex, Vertex>,
+        failed: MutableSet<Vertex>, ud: Int
+    ): Trace? {
         //1)path.foreach(trace.actions.contains(it)) -> find mismatch as path[i]
         //2)if we didnt found mismatch return lastTrace
         //3)else force prev as path[i-1] -> tempTrace
@@ -442,24 +409,23 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
         //fun Instruction.find() = graph.vertices.find {it.inst == this}
         var lastTrace = trace
 
-        while(true){
+        while (true) {
             var mismatch: Vertex? = null
 
             val set = traceToSetVertex(graph, lastTrace)
             var numberMatched = 0
-            for(vert in path.values) {
-                if(set.contains(vert)) {
+            for (vert in path.values) {
+                if (set.contains(vert)) {
                     numberMatched++
                     continue
-                }
-                else {
+                } else {
                     mismatch = vert
                     break
                 }
             }
 
-            if(mismatch == null)
-                return if(numberMatched>0)
+            if (mismatch == null)
+                return if (numberMatched > 0)
                     lastTrace
                 else null
 
@@ -467,20 +433,20 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
             val ps = getState(mismatch.inst.parent)
             mismatch.tries++
 
-            if(ps == null || ps.isEmpty) {
+            if (ps == null || ps.isEmpty) {
                 log.debug("SAP: could not generate a predicateState")
                 failed.add(mismatch)       //same as above
-                return if(numberMatched>0)
+                return if (numberMatched > 0)
                     lastTrace
                 else null
             }
 
             val tempTrace = execute(graph.rootMethod, lastTrace, ps)
             yield()
-            if(tempTrace == null || tempTrace.actions.isNullOrEmpty())  {
+            if (tempTrace == null || tempTrace.actions.isNullOrEmpty()) {
                 log.debug("SAP: could not process a trace...")
                 failed.add(mismatch)       //same as above
-                return if(numberMatched>0)
+                return if (numberMatched > 0)
                     lastTrace
                 else null
             }
@@ -506,12 +472,12 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
         val count = graph.vertices.size.toDouble()
         var covered = 0.0
 
-        for(vertex in graph.vertices) {
-            if(vertex.isCovered)
+        for (vertex in graph.vertices) {
+            if (vertex.isCovered)
                 covered += 1.0
         }
 
-        var graphCoverage: Double = (covered/count).toDouble() * 100
+        var graphCoverage: Double = (covered / count).toDouble() * 100
         log.debug("========================================================")
         log.debug("Total static graph coverage is $graphCoverage %")
         //log.debug(graph.vertices.toString())
@@ -535,7 +501,7 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
 
         while (true) {
 
-            if(failedIterations > 20) {
+            if (failedIterations > 20) {
                 log.debug("CFGDS: too many failed iterations in a row, exiting")
                 break
             }
@@ -580,7 +546,7 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
             yield()
             log.debug("just generated a trace")
 
-            if(tempTrace == null || tempTrace.actions.isNullOrEmpty()) {
+            if (tempTrace == null || tempTrace.actions.isNullOrEmpty()) {
                 log.debug("Could not process a trace for branch $branch")
                 failedIterations++
                 failedToForce.add(found)
@@ -590,15 +556,14 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
 
             val newBranchCovered = graph.addTrace(lastTrace)
 
-            if(!newBranchCovered) {
+            if (!newBranchCovered) {
                 failedIterations++
                 failedToForce.add(found)
                 log.debug("CFGDS: Processing a trace was successful, but no new branches are covered")
-            }
-            else {
+            } else {
                 failedIterations = 0
             }
-            if(failedIterations > 20) {
+            if (failedIterations > 20) {
                 log.debug("CFGDS: too many failed iterations in a row, exiting")
                 break
             }
@@ -609,18 +574,18 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
             val pathList = graph.findPathsForSAP(found, ud)
             yield()
 
-            if(pathList.isEmpty()) {
+            if (pathList.isEmpty()) {
                 log.debug("No path found for SAP, continuing")
-                found.tries+=1
+                found.tries += 1
                 continue
             }
 
             var sapSucceed = false
 
-            for(path in pathList) {
+            for (path in pathList) {
                 val trace = searchAlongPath(graph, lastTrace, path, failedToForce, ud)
                 yield()
-                if(trace==null || trace.actions.isNullOrEmpty()) {
+                if (trace == null || trace.actions.isNullOrEmpty()) {
                     log.debug("SAP: did not succeed on current iteration")
                     continue
                 }
@@ -629,11 +594,10 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
                 break
             }
 
-            if(!sapSucceed){
+            if (!sapSucceed) {
                 found.tries++
                 continue
-            }
-            else {
+            } else {
                 graph.addTrace(lastTrace)
                 graph.dropTries()
             }
@@ -641,6 +605,28 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
         }
         finish(graph)
     }
+
+    /*
+    * private fun analyze(method: Method) {
+        log.debug(method.print())
+        try {
+            runBlocking {
+                withTimeout(timeLimit) {
+                    try {
+                        //val statistics = Statistics("CGS", method.toString(), 0, Duration.ZERO, 0)
+                        //processTree(method, statistics)
+                        processCFGDS(method)
+                        //statistics.stopTimeMeasurement()
+                        //log.info(statistics.print())
+                    } catch (e: TimeoutException) {
+                        log.debug("Timeout on running $method")
+                    }
+                }
+            }
+        } catch (e: TimeoutCancellationException) {
+            return
+        }
+    }*/
 
 
 }

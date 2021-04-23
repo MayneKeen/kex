@@ -1,7 +1,7 @@
 package org.jetbrains.research.kex.asm.analysis.concolic
 
-import com.abdullin.kthelper.collection.queueOf
-import com.abdullin.kthelper.logging.log
+import org.jetbrains.research.kthelper.collection.queueOf
+import org.jetbrains.research.kthelper.logging.log
 import org.jetbrains.research.kex.state.predicate.path
 import org.jetbrains.research.kex.trace.`object`.*
 import org.jetbrains.research.kfg.ClassManager

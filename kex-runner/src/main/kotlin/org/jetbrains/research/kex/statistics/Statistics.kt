@@ -34,10 +34,10 @@ data class Statistics(val algorithm: String,
                 writer.flush()
                 writer.close()
             } catch (e: IOException) {
-                com.abdullin.kthelper.logging.log.warn("IOException $e occurred while writing statistics to log file.")
+                org.jetbrains.research.kthelper.logging.log.warn("IOException $e occurred while writing statistics to log file.")
             }
         } else {
-            com.abdullin.kthelper.logging.log.debug(this.toString())
+            org.jetbrains.research.kthelper.logging.log.debug(this.toString())
         }
     }
 

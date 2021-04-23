@@ -1,7 +1,7 @@
 package org.jetbrains.research.kex.asm.analysis.concolic
 
-import com.abdullin.kthelper.collection.queueOf
-import com.abdullin.kthelper.collection.stackOf
+import org.jetbrains.research.kthelper.collection.queueOf
+import org.jetbrains.research.kthelper.collection.stackOf
 import org.jetbrains.research.kex.trace.`object`.*
 
 
