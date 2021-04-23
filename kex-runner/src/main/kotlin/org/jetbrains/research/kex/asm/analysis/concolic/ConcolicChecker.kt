@@ -527,6 +527,9 @@ class ConcolicChecker(val ctx: ExecutionContext, val manager: TraceManager<Trace
 
         var lastTrace = getRandomTraceUntilSuccess(graph.rootMethod)
         yield()
+        graph.addTrace(lastTrace)
+
+
         val failedToForce = mutableSetOf<Vertex>()
         var failedIterations = 0
 

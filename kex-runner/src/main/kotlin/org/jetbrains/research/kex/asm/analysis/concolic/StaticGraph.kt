@@ -327,7 +327,7 @@ class StaticGraph(enterPoint: Method) {
 
         val covered = vertices.filter { it.isCovered && !failed.contains(it) }.toMutableSet()
 
-        log.debug("++++++++++++++++++++)" + covered.size)
+        log.debug("++++++++++++++++++++(" + covered.size +")")
 
         for (vertex in covered)
             when (vertex) {
