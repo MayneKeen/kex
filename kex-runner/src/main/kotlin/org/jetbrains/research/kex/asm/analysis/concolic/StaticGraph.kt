@@ -2,9 +2,7 @@ package org.jetbrains.research.kex.asm.analysis.concolic
 
 import org.jetbrains.research.kthelper.collection.queueOf
 import org.jetbrains.research.kthelper.logging.log
-import org.jetbrains.research.kex.state.predicate.path
 import org.jetbrains.research.kex.trace.`object`.*
-import org.jetbrains.research.kfg.ClassManager
 import org.jetbrains.research.kfg.ir.*
 import org.jetbrains.research.kfg.ir.value.instruction.*
 
@@ -85,16 +83,12 @@ class StaticGraph(enterPoint: Method) {
     init {
         val temp = rootMethod.entry.first()
         root = wrapAndAddInst(temp, null)
-        //root = newVertexByInst(temp)
         vertices.add(root)
         buildGraph(root)
     }
 
 
-
     private fun nextInst(instruction: Instruction): Instruction? {
-//        if(instruction is TerminateInst)
-//            return null
         val iterator = instruction.parent.iterator()
         var result: Instruction? = null
 
@@ -136,11 +130,7 @@ class StaticGraph(enterPoint: Method) {
                         if (vertex.inst.method.isNotEmpty())
                             next.add(wrapAndAddInst(vertex.inst.method.entry.first(), vertex))
                         else {
-                            log.debug(
-                                /*"Wrapping CallInst ${vertex.inst} method" +
-                                        "failed: method ${vertex.inst.method} is empty"*/
-                            "Wrapping CallInst failed: method is empty"
-                            )
+                            log.debug("Wrapping CallInst failed: method is empty")
                         }
                     }
 
@@ -186,6 +176,10 @@ class StaticGraph(enterPoint: Method) {
 
             when (action) {
                 is MethodEntry -> {
+                    if (action.method.hasBody) {
+                        currentBlock = action.method.entry
+                        currentBlock.instructions.first().find()?.isCovered = true
+                    }
                     continue
                 }               //??
                 is MethodReturn -> {
@@ -198,7 +192,6 @@ class StaticGraph(enterPoint: Method) {
                     if (currentBlock != null && currentBlock.isNotEmpty) {
                         val temp = currentBlock.instructions.filterIsInstance<CallInst>()
                         temp.find { it.method == action.method }?.find()?.isCovered = true
-                        //temp.forEach { it.find()?.isCovered = true }
                     }
                 }
                 is StaticInitEntry -> {
@@ -214,17 +207,26 @@ class StaticGraph(enterPoint: Method) {
                 }
                 is BlockJump -> {
                     currentBlock = action.block
+                    for (inst in currentBlock.instructions) {
+                        inst.find()?.isCovered = true
+                    }
                     val vert = currentBlock.terminator.find()
                     vert?.isCovered = true
                 }
                 is BlockBranch -> {
                     currentBlock = action.block
+                    for (inst in currentBlock.instructions) {
+                        inst.find()?.isCovered = true
+                    }
                     val vert = currentBlock.terminator.find()
                     vert?.isCovered = true
                     newBranchCovered = true
                 }
                 is BlockSwitch -> {
                     currentBlock = action.block
+                    for (inst in currentBlock.instructions) {
+                        inst.find()?.isCovered = true
+                    }
                     val vert = currentBlock.terminator.find()
                     vert?.isCovered = true
                     newBranchCovered = true
@@ -320,51 +322,45 @@ class StaticGraph(enterPoint: Method) {
         return set
     }
 
-    private fun findWithMinUD(failed: MutableSet<Vertex>): MutableSet<Vertex> {
-        log.debug("++++++++++++++++++++FINDMINUD")
+    private fun findWithMinUD(failed: MutableSet<Vertex>/*, forced: MutableSet<Vertex>*/): MutableSet<Vertex> {
+        log.debug("Graph: entering findWithMinUd")
         var result = mutableSetOf<Vertex>()
         var ud = Int.MAX_VALUE
 
-        val covered = vertices.filter { it.isCovered && !failed.contains(it) }.toMutableSet()
+        val covered = vertices.filter { it.isCovered && !failed.contains(it) /*&& forced.contains(it)*/ }
+            .filterIsInstance<TerminateVert>().toMutableSet()
 
-        log.debug("++++++++++++++++++++(" + covered.size +")")
+        log.debug("Graph: findWithMinUd covered terminators quantity = (" + covered.size + ")")
 
         for (vertex in covered)
-            when (vertex) {
-                is Vert -> {
-                    continue
+            result = when (vertex.inst) {
+                is BranchInst -> {
+                    checkUD(result, vertex, ud)
                 }
-                is CallVert -> {
-                    continue
+                is SwitchInst -> {
+                    checkUD(result, vertex, ud)
                 }
-                is TerminateVert -> {
-                    result = when (vertex.inst) {
-                        is BranchInst -> {
-                            checkUD(result, vertex, ud)
-                        }
-                        is SwitchInst -> {
-                            checkUD(result, vertex, ud)
-                        }
-                        is TableSwitchInst -> {
-                            checkUD(result, vertex, ud)
-                        }
-                        else -> {
-                            continue
-                        }
-                    }
-                    if (result.size == 1)
-                        ud = result.first().uncoveredDistance + result.first().tries
+                is TableSwitchInst -> {
+                    checkUD(result, vertex, ud)
+                }
+                else -> {
+                    result
+                    continue
                 }
             }
+        //log.debug("Graph: findWithMinUD.size = ${result.size}")
+//        if (result.size == 1)
+//            //ud = result.first().uncoveredDistance + result.first().tries
+        //log.debug("Graph: findWithMinUD  size = ${result.size}")
         return result
     }
 
-    fun nextBranchToForce(failed: MutableSet<Vertex>): Vertex? {
-        val minUdSet = findWithMinUD(failed)
+    fun nextBranchToForce(failed: MutableSet<Vertex>/*, forced: MutableSet<Vertex>*/): Vertex? {
+        val minUdSet = findWithMinUD(failed/*, forced*/)
         return if (minUdSet.isEmpty())
             null
         else {
-            minUdSet.first()
+            minUdSet.iterator().next()
         }
     }
 
@@ -374,22 +370,24 @@ class StaticGraph(enterPoint: Method) {
         while (iterator.hasNext()) {
             val path = iterator.next()
             val uncoveredSet = path.values.filter { !it.isCovered }.toMutableSet()
-            if(uncoveredSet.isNullOrEmpty()){
+            if (uncoveredSet.isNullOrEmpty()) {
                 iterator.remove()
             }
         }
-        return if(paths.isEmpty())
+        return if (paths.isEmpty())
             mutableListOf()
         else paths
 
     }
 
-    private fun findPathsDFS(curr: Vertex, ud: Int, path: MutableMap<Vertex, Vertex>,
-                     paths: MutableList<MutableMap<Vertex, Vertex>>): MutableList<MutableMap<Vertex, Vertex>> {
+    private fun findPathsDFS(
+        curr: Vertex, ud: Int, path: MutableMap<Vertex, Vertex>,
+        paths: MutableList<MutableMap<Vertex, Vertex>>
+    ): MutableList<MutableMap<Vertex, Vertex>> {
         var updatedPaths = paths
 
         if (curr.successors.isEmpty()) {
-            if(path.isEmpty())
+            if (path.isEmpty())
                 return updatedPaths
 
             updatedPaths.add(path)
@@ -397,8 +395,8 @@ class StaticGraph(enterPoint: Method) {
         }
 
         for (successor in curr.successors) {
-            val dist = ud - curr.weights[successor]!!
-            if(dist < 0) {
+            val dist = ud - curr.weights[successor]!! + 1
+            if (dist < 0) {
                 return updatedPaths
             }
 
@@ -407,11 +405,9 @@ class StaticGraph(enterPoint: Method) {
             newPath[curr] = successor
 
             updatedPaths = findPathsDFS(successor, dist, newPath, updatedPaths)
-            //return updatedPaths
         }
         return updatedPaths
     }
-
 
     fun dropTries() = vertices.forEach { it.tries = 0 }
 

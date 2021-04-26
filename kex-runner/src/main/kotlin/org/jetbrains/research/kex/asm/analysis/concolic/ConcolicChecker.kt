@@ -67,7 +67,8 @@ class ConcolicChecker(
             runBlocking {
                 withTimeout(timeLimit) {
                     try {
-                        process(method)
+                        //process(method)
+                        processCFGDS(method)
                     } catch (e: TimeoutException) {
                         log.debug("Timeout on running $method")
                     }
@@ -78,6 +79,30 @@ class ConcolicChecker(
         }
         generator.emit()
     }
+
+
+    /*
+    * private fun analyze(method: Method) {
+        log.debug(method.print())
+        try {
+            runBlocking {
+                withTimeout(timeLimit) {
+                    try {
+                        //val statistics = Statistics("CGS", method.toString(), 0, Duration.ZERO, 0)
+                        //processTree(method, statistics)
+                        processCFGDS(method)
+                        //statistics.stopTimeMeasurement()
+                        //log.info(statistics.print())
+                    } catch (e: TimeoutException) {
+                        log.debug("Timeout on running $method")
+                    }
+                }
+            }
+        } catch (e: TimeoutCancellationException) {
+            return
+        }
+    }*/
+
 
     override fun visit(method: Method) {
         if (method.isStaticInitializer || method.isAbstract) return
@@ -262,11 +287,13 @@ class ConcolicChecker(
         }
     }
 
-    suspend fun getRandomTraceUntilSuccess(method: Method): Trace {
+    private suspend fun getRandomTraceUntilSuccess(method: Method): Trace? {
         var trace: Trace? = null
-        while (trace == null || trace.actions.isEmpty()) {
+        var iterations = 0
+        while (iterations < 10 && (trace == null || trace.actions.isEmpty())) {
             trace = getRandomTrace(method)?.also { manager[method] = it }
             yield()
+            iterations++
         }
         return trace
     }
@@ -299,6 +326,10 @@ class ConcolicChecker(
     }
 
     private suspend fun processCFGDS(method: Method) {
+        if (!method.hasBody) {
+            log.debug("Method $method is empty or has empty body")
+            return
+        }
         val graph = StaticGraph(method)
         cfgds(graph)
     }
@@ -309,16 +340,12 @@ class ConcolicChecker(
         return builder.getInstructionState(block.terminator)
     }
 
-    //contains no problems
     private suspend fun execute(method: Method, trace: Trace, ps: PredicateState): Trace? {
-        //val state = buildState(method, trace)
-        //state += ps?
         val path = ps.path //mutated.path
         if (path in paths) {
-            log.debug("Could not generate new trace")
+            log.debug("Generated already existing path")
             return null
         }
-        //log.debug("Collected trace: $state")
         log.debug("New trace: $ps")
 
         val psa = PredicateStateAnalysis(cm)
@@ -401,11 +428,6 @@ class ConcolicChecker(
         graph: StaticGraph, trace: Trace, path: MutableMap<Vertex, Vertex>,
         failed: MutableSet<Vertex>, ud: Int
     ): Trace? {
-        //1)path.foreach(trace.actions.contains(it)) -> find mismatch as path[i]
-        //2)if we didnt found mismatch return lastTrace
-        //3)else force prev as path[i-1] -> tempTrace
-        //  4)if forcing succeed lastTrace = tempTrace
-        //  5)else
         //fun Instruction.find() = graph.vertices.find {it.inst == this}
         var lastTrace = trace
 
@@ -429,8 +451,7 @@ class ConcolicChecker(
                     lastTrace
                 else null
 
-            //val ps = getState(mismatch.bb)  //???? should we force mismatch.predecessor.bb instead?
-            val ps = getState(mismatch.inst.parent)
+            val ps = getState(mismatch.inst.parent) //should we force mismatch.predecessor.bb instead?
             mismatch.tries++
 
             if (ps == null || ps.isEmpty) {
@@ -457,14 +478,12 @@ class ConcolicChecker(
             log.debug("SAP: an iteration of sap worked correctly")
             continue
         }
-
     }
 
     //the search terminates in failure
     //if it runs out of branches to select, it exhausts its budget of
     //test iterations, or if it uncovers no new branches after some
     //set number of iterations.
-
 
     private suspend fun finish(graph: StaticGraph) {
         log.debug("Finishing the search")
@@ -477,31 +496,31 @@ class ConcolicChecker(
                 covered += 1.0
         }
 
-        var graphCoverage: Double = (covered / count).toDouble() * 100
+        var graphCoverage = (covered / count) * 100
         log.debug("========================================================")
-        log.debug("Total static graph coverage is $graphCoverage %")
-        //log.debug(graph.vertices.toString())
+        log.debug("Total static graph coverage for ${graph.rootMethod} is $graphCoverage %")
         log.debug("========================================================")
         yield()
-        //exitProcess(0)
-
-        //something about finishing our search and printing stats or smth like that
-        //do we need this?
     }
 
     suspend fun cfgds(graph: StaticGraph) {
 
         var lastTrace = getRandomTraceUntilSuccess(graph.rootMethod)
         yield()
-        graph.addTrace(lastTrace)
 
+        if (lastTrace == null || lastTrace.actions.isEmpty()) {
+            log.debug("CFGDS: Could not process any trace in method ${graph.rootMethod}")
+            return
+        }
+
+        graph.addTrace(lastTrace)
 
         val failedToForce = mutableSetOf<Vertex>()
         var failedIterations = 0
 
         while (true) {
 
-            if (failedIterations > 20) {
+            if (failedIterations > 100) {
                 log.debug("CFGDS: too many failed iterations in a row, exiting")
                 break
             }
@@ -511,49 +530,38 @@ class ConcolicChecker(
             //graph.dropTries()
 
             log.debug("CFGDS: Searching for a branch to force...")
-            val found = graph.nextBranchToForce(failedToForce)
+            val found = graph.nextBranchToForce(failedToForce/*alreadyForced*/)
 
             if (found == null) {
-                failedIterations++
-                log.debug("====================Could not find a branch to force")
-                continue
-                //break
+                log.debug("CFGDS: Could not find a branch to force, exiting")
+                break
             }
 
-
-
             log.debug("found a branch")
-
-
-            //here we should have checked if there were any covered branches
-            // and finish our search in case there weren't
-            // after some set number of iterations
-
-            //val branch = found.bb
             val branch = found.inst.parent
 
             val ps = getState(branch)
             found.tries++
 
             if (ps == null || ps.isEmpty) {
-                log.debug("Could not generate a PredicateState for block $branch")
+                log.debug("CFGDS: Could not generate a PredicateState for block $branch")
                 failedIterations++
                 failedToForce.add(found)
                 continue
             }
 
-            val tempTrace = execute(graph.rootMethod, lastTrace, ps)
+            val tempTrace = execute(graph.rootMethod, lastTrace!!, ps)
             yield()
-            log.debug("just generated a trace")
+
 
             if (tempTrace == null || tempTrace.actions.isNullOrEmpty()) {
-                log.debug("Could not process a trace for branch $branch")
+                log.debug("CFGDS: Could not process a trace for branch $branch")
                 failedIterations++
                 failedToForce.add(found)
                 continue
             }
             lastTrace = tempTrace
-
+            log.debug("CFGDS: Just generated a trace")
             val newBranchCovered = graph.addTrace(lastTrace)
 
             if (!newBranchCovered) {
@@ -583,7 +591,7 @@ class ConcolicChecker(
             var sapSucceed = false
 
             for (path in pathList) {
-                val trace = searchAlongPath(graph, lastTrace, path, failedToForce, ud)
+                val trace = searchAlongPath(graph, lastTrace!!, path, failedToForce, ud)
                 yield()
                 if (trace == null || trace.actions.isNullOrEmpty()) {
                     log.debug("SAP: did not succeed on current iteration")
@@ -598,35 +606,11 @@ class ConcolicChecker(
                 found.tries++
                 continue
             } else {
-                graph.addTrace(lastTrace)
+                graph.addTrace(lastTrace!!)
                 graph.dropTries()
             }
             log.debug("SearchAlongPath finished, trying to force a new branch in CFGDS")
         }
         finish(graph)
     }
-
-    /*
-    * private fun analyze(method: Method) {
-        log.debug(method.print())
-        try {
-            runBlocking {
-                withTimeout(timeLimit) {
-                    try {
-                        //val statistics = Statistics("CGS", method.toString(), 0, Duration.ZERO, 0)
-                        //processTree(method, statistics)
-                        processCFGDS(method)
-                        //statistics.stopTimeMeasurement()
-                        //log.info(statistics.print())
-                    } catch (e: TimeoutException) {
-                        log.debug("Timeout on running $method")
-                    }
-                }
-            }
-        } catch (e: TimeoutCancellationException) {
-            return
-        }
-    }*/
-
-
 }
