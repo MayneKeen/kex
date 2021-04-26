@@ -202,11 +202,15 @@ class StaticGraph(enterPoint: Method) {
                 }
                 is BlockEntry -> {
                     currentBlock = action.block
+                    if(currentBlock.isEmpty)
+                        continue
                     val vert = currentBlock.instructions.first().find()
                     vert?.isCovered = true
                 }
                 is BlockJump -> {
                     currentBlock = action.block
+                    if(currentBlock.isEmpty)
+                        continue
                     for (inst in currentBlock.instructions) {
                         inst.find()?.isCovered = true
                     }
@@ -215,21 +219,28 @@ class StaticGraph(enterPoint: Method) {
                 }
                 is BlockBranch -> {
                     currentBlock = action.block
+                    if(currentBlock.isEmpty)
+                        continue
+                    val vert = currentBlock.terminator.find() ?: continue
+
+                    if(!vert.isCovered) {
+                        newBranchCovered = true
+                    }
                     for (inst in currentBlock.instructions) {
                         inst.find()?.isCovered = true
                     }
-                    val vert = currentBlock.terminator.find()
-                    vert?.isCovered = true
-                    newBranchCovered = true
                 }
                 is BlockSwitch -> {
                     currentBlock = action.block
+                    if(currentBlock.isEmpty)
+                        continue
+                    val vert = currentBlock.terminator.find() ?: continue
+                    if(!vert.isCovered) {
+                        newBranchCovered = true
+                    }
                     for (inst in currentBlock.instructions) {
                         inst.find()?.isCovered = true
                     }
-                    val vert = currentBlock.terminator.find()
-                    vert?.isCovered = true
-                    newBranchCovered = true
                 }
             }
         }
@@ -240,9 +251,8 @@ class StaticGraph(enterPoint: Method) {
         traces.add(trace)
         val newBranchCovered = coverStaticPath(trace.actions)
 
-        log.debug("graph: trace added successfully, recomputing UD")
+        log.debug("Graph: trace added successfully, recomputing UD")
         recomputeUncoveredDistance()
-        log.debug("graph: just recomputed UD")
         return newBranchCovered
     }
 

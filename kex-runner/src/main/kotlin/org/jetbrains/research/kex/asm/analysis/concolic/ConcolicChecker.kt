@@ -566,7 +566,7 @@ class ConcolicChecker(
 
             if (!newBranchCovered) {
                 failedIterations++
-                failedToForce.add(found)
+                //failedToForce.add(found)
                 log.debug("CFGDS: Processing a trace was successful, but no new branches are covered")
             } else {
                 failedIterations = 0
@@ -577,15 +577,18 @@ class ConcolicChecker(
             }
 
             val ud = found.uncoveredDistance + found.tries
-            log.debug("entering searchAlongPath")
+            log.debug("CFGDS: entering searchAlongPath")
 
             val pathList = graph.findPathsForSAP(found, ud)
             yield()
 
             if (pathList.isEmpty()) {
-                log.debug("No path found for SAP, continuing")
+                log.debug("CFGDS: No path found for SAP, continuing")
                 found.tries += 1
                 continue
+            }
+            else {
+                log.debug("CFGDS: A path for SAP has been found")
             }
 
             var sapSucceed = false
@@ -594,7 +597,7 @@ class ConcolicChecker(
                 val trace = searchAlongPath(graph, lastTrace!!, path, failedToForce, ud)
                 yield()
                 if (trace == null || trace.actions.isNullOrEmpty()) {
-                    log.debug("SAP: did not succeed on current iteration")
+                    log.debug("CFGDS: SAP did not succeed on current iteration")
                     continue
                 }
                 sapSucceed = true
@@ -609,7 +612,7 @@ class ConcolicChecker(
                 graph.addTrace(lastTrace!!)
                 graph.dropTries()
             }
-            log.debug("SearchAlongPath finished, trying to force a new branch in CFGDS")
+            log.debug("CFGDS: SearchAlongPath finished, trying to force a new branch in CFGDS")
         }
         finish(graph)
     }
