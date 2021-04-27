@@ -5,6 +5,8 @@ import org.jetbrains.research.kthelper.logging.log
 import org.jetbrains.research.kex.trace.`object`.*
 import org.jetbrains.research.kfg.ir.*
 import org.jetbrains.research.kfg.ir.value.instruction.*
+import java.lang.NullPointerException
+import kotlin.system.exitProcess
 
 class StaticGraph(enterPoint: Method) {
 
@@ -222,7 +224,6 @@ class StaticGraph(enterPoint: Method) {
                     if(currentBlock.isEmpty)
                         continue
                     val vert = currentBlock.terminator.find() ?: continue
-
                     if(!vert.isCovered) {
                         newBranchCovered = true
                     }
@@ -340,7 +341,13 @@ class StaticGraph(enterPoint: Method) {
         val covered = vertices.filter { it.isCovered && !failed.contains(it) /*&& forced.contains(it)*/ }
             .filterIsInstance<TerminateVert>().toMutableSet()
 
+        //4debug only {
+        val instances = covered.filter { it.inst is BranchInst || it.inst is SwitchInst || it.inst is TableSwitchInst }
+        val total = vertices.filterIsInstance<TerminateVert>().filter { it.inst is BranchInst || it.inst is SwitchInst || it.inst is TableSwitchInst }
         log.debug("Graph: findWithMinUd covered terminators quantity = (" + covered.size + ")")
+        log.debug("Graph: Total branches quantity = (" + total.size + ")")
+        log.debug("Graph: findWithMinUd covered branches quantity = (" + instances.size + ")")
+        //{
 
         for (vertex in covered)
             result = when (vertex.inst) {
@@ -376,6 +383,10 @@ class StaticGraph(enterPoint: Method) {
 
     fun findPathsForSAP(curr: Vertex, ud: Int): MutableList<MutableMap<Vertex, Vertex>> {
         val paths = findPathsDFS(curr, ud, mutableMapOf(), mutableListOf())
+
+        if(paths.isEmpty())
+            return mutableListOf()
+
         val iterator = paths.iterator()
         while (iterator.hasNext()) {
             val path = iterator.next()
@@ -387,13 +398,11 @@ class StaticGraph(enterPoint: Method) {
         return if (paths.isEmpty())
             mutableListOf()
         else paths
-
     }
 
-    private fun findPathsDFS(
-        curr: Vertex, ud: Int, path: MutableMap<Vertex, Vertex>,
-        paths: MutableList<MutableMap<Vertex, Vertex>>
-    ): MutableList<MutableMap<Vertex, Vertex>> {
+    private fun findPathsDFS(curr: Vertex, ud: Int, path: MutableMap<Vertex, Vertex>,
+        paths: MutableList<MutableMap<Vertex, Vertex>>): MutableList<MutableMap<Vertex, Vertex>> {
+
         var updatedPaths = paths
 
         if (curr.successors.isEmpty()) {
@@ -405,7 +414,9 @@ class StaticGraph(enterPoint: Method) {
         }
 
         for (successor in curr.successors) {
-            val dist = ud - curr.weights[successor]!! + 1
+            val dist = ud - curr.weights[successor]!!
+            print("dist is $dist")
+            print("${path.size}")
             if (dist < 0) {
                 return updatedPaths
             }
@@ -416,6 +427,7 @@ class StaticGraph(enterPoint: Method) {
 
             updatedPaths = findPathsDFS(successor, dist, newPath, updatedPaths)
         }
+        //exitProcess(1)
         return updatedPaths
     }
 

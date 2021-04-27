@@ -430,12 +430,16 @@ class ConcolicChecker(
     ): Trace? {
         //fun Instruction.find() = graph.vertices.find {it.inst == this}
         var lastTrace = trace
+        var numberMatched = 0
+        var failedIterations = 0
 
         while (true) {
             var mismatch: Vertex? = null
 
             val set = traceToSetVertex(graph, lastTrace)
-            var numberMatched = 0
+
+            numberMatched = 0
+
             for (vert in path.values) {
                 if (set.contains(vert)) {
                     numberMatched++
@@ -444,6 +448,11 @@ class ConcolicChecker(
                     mismatch = vert
                     break
                 }
+
+            }
+            if(numberMatched == set.size) {
+                log.debug("SAP: succeed")
+                return lastTrace
             }
 
             if (mismatch == null)
@@ -451,7 +460,8 @@ class ConcolicChecker(
                     lastTrace
                 else null
 
-            val ps = getState(mismatch.inst.parent) //should we force mismatch.predecessor.bb instead?
+            val ps = getState(mismatch.inst.parent)
+            //should we force mismatch.predecessor or mismatch.successor instead?
             mismatch.tries++
 
             if (ps == null || ps.isEmpty) {
@@ -464,6 +474,7 @@ class ConcolicChecker(
 
             val tempTrace = execute(graph.rootMethod, lastTrace, ps)
             yield()
+
             if (tempTrace == null || tempTrace.actions.isNullOrEmpty()) {
                 log.debug("SAP: could not process a trace...")
                 failed.add(mismatch)       //same as above
@@ -473,7 +484,16 @@ class ConcolicChecker(
             }
 
             lastTrace = tempTrace
-            graph.addTrace(lastTrace)
+            val newBranchCovered = graph.addTrace(lastTrace)
+
+            if(!newBranchCovered) {
+                log.debug("SAP: a failed iteration")
+                failedIterations++
+            }
+            if(failedIterations > 20) {
+                log.debug("SAP: did not succeed, too many failed iterations in a row")
+                return lastTrace
+            }
 
             log.debug("SAP: an iteration of sap worked correctly")
             continue
@@ -576,7 +596,12 @@ class ConcolicChecker(
                 break
             }
 
-            val ud = found.uncoveredDistance + found.tries
+            val ud =
+                if(found.uncoveredDistance + found.tries > 0)
+                    found.uncoveredDistance + found.tries
+                else
+                    Int.MAX_VALUE
+
             log.debug("CFGDS: entering searchAlongPath")
 
             val pathList = graph.findPathsForSAP(found, ud)
@@ -589,6 +614,7 @@ class ConcolicChecker(
             }
             else {
                 log.debug("CFGDS: A path for SAP has been found")
+
             }
 
             var sapSucceed = false
