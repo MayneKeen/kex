@@ -5,8 +5,6 @@ import org.jetbrains.research.kthelper.logging.log
 import org.jetbrains.research.kex.trace.`object`.*
 import org.jetbrains.research.kfg.ir.*
 import org.jetbrains.research.kfg.ir.value.instruction.*
-import java.lang.NullPointerException
-import kotlin.system.exitProcess
 
 class StaticGraph(enterPoint: Method) {
 
@@ -204,14 +202,14 @@ class StaticGraph(enterPoint: Method) {
                 }
                 is BlockEntry -> {
                     currentBlock = action.block
-                    if(currentBlock.isEmpty)
+                    if (currentBlock.isEmpty)
                         continue
                     val vert = currentBlock.instructions.first().find()
                     vert?.isCovered = true
                 }
                 is BlockJump -> {
                     currentBlock = action.block
-                    if(currentBlock.isEmpty)
+                    if (currentBlock.isEmpty)
                         continue
                     for (inst in currentBlock.instructions) {
                         inst.find()?.isCovered = true
@@ -221,10 +219,10 @@ class StaticGraph(enterPoint: Method) {
                 }
                 is BlockBranch -> {
                     currentBlock = action.block
-                    if(currentBlock.isEmpty)
+                    if (currentBlock.isEmpty)
                         continue
                     val vert = currentBlock.terminator.find() ?: continue
-                    if(!vert.isCovered) {
+                    if (!vert.isCovered) {
                         newBranchCovered = true
                     }
                     for (inst in currentBlock.instructions) {
@@ -233,10 +231,10 @@ class StaticGraph(enterPoint: Method) {
                 }
                 is BlockSwitch -> {
                     currentBlock = action.block
-                    if(currentBlock.isEmpty)
+                    if (currentBlock.isEmpty)
                         continue
                     val vert = currentBlock.terminator.find() ?: continue
-                    if(!vert.isCovered) {
+                    if (!vert.isCovered) {
                         newBranchCovered = true
                     }
                     for (inst in currentBlock.instructions) {
@@ -257,10 +255,12 @@ class StaticGraph(enterPoint: Method) {
         return newBranchCovered
     }
 
-    private fun findUncovered(): MutableSet<Vertex> = vertices.filter { it.isCovered }.toMutableSet()
+    private fun findUncovered(): MutableSet<Vertex> = vertices.filter { !it.isCovered }.toMutableSet()
 
     private fun recomputeUncoveredDistance() {
         val uncovered: MutableSet<Vertex> = findUncovered()
+
+        vertices.forEach { it.uncoveredDistance = Int.MAX_VALUE / 2 }
 
         for (vertex in uncovered) {
             if (vertex == this.root)
@@ -306,6 +306,7 @@ class StaticGraph(enterPoint: Method) {
         q.add(v)
         q.addAll(generateDijkstraSearchSet(v))
         q.forEach { map[it] = Int.MAX_VALUE }
+        map[v] = 0
 
         while (q.isNotEmpty()) {
             curr = q.first()
@@ -341,15 +342,16 @@ class StaticGraph(enterPoint: Method) {
         val covered = vertices.filter { it.isCovered && !failed.contains(it) /*&& forced.contains(it)*/ }
             .filterIsInstance<TerminateVert>().toMutableSet()
 
-        //4debug only {
+        //4 debug only {
         val instances = covered.filter { it.inst is BranchInst || it.inst is SwitchInst || it.inst is TableSwitchInst }
-        val total = vertices.filterIsInstance<TerminateVert>().filter { it.inst is BranchInst || it.inst is SwitchInst || it.inst is TableSwitchInst }
+        val total = vertices.filterIsInstance<TerminateVert>()
+            .filter { it.inst is BranchInst || it.inst is SwitchInst || it.inst is TableSwitchInst }
         log.debug("Graph: findWithMinUd covered terminators quantity = (" + covered.size + ")")
         log.debug("Graph: Total branches quantity = (" + total.size + ")")
         log.debug("Graph: findWithMinUd covered branches quantity = (" + instances.size + ")")
         //{
 
-        for (vertex in covered)
+        for (vertex in covered) {
             result = when (vertex.inst) {
                 is BranchInst -> {
                     checkUD(result, vertex, ud)
@@ -364,11 +366,11 @@ class StaticGraph(enterPoint: Method) {
                     result
                     continue
                 }
+
             }
-        //log.debug("Graph: findWithMinUD.size = ${result.size}")
-//        if (result.size == 1)
-//            //ud = result.first().uncoveredDistance + result.first().tries
-        //log.debug("Graph: findWithMinUD  size = ${result.size}")
+            if (result.isNotEmpty())
+                ud = result.first().uncoveredDistance
+        }
         return result
     }
 
@@ -384,7 +386,7 @@ class StaticGraph(enterPoint: Method) {
     fun findPathsForSAP(curr: Vertex, ud: Int): MutableList<MutableMap<Vertex, Vertex>> {
         val paths = findPathsDFS(curr, ud, mutableMapOf(), mutableListOf())
 
-        if(paths.isEmpty())
+        if (paths.isEmpty())
             return mutableListOf()
 
         val iterator = paths.iterator()
@@ -400,8 +402,10 @@ class StaticGraph(enterPoint: Method) {
         else paths
     }
 
-    private fun findPathsDFS(curr: Vertex, ud: Int, path: MutableMap<Vertex, Vertex>,
-        paths: MutableList<MutableMap<Vertex, Vertex>>): MutableList<MutableMap<Vertex, Vertex>> {
+    private fun findPathsDFS(
+        curr: Vertex, ud: Int, path: MutableMap<Vertex, Vertex>,
+        paths: MutableList<MutableMap<Vertex, Vertex>>
+    ): MutableList<MutableMap<Vertex, Vertex>> {
 
         var updatedPaths = paths
 
@@ -427,7 +431,6 @@ class StaticGraph(enterPoint: Method) {
 
             updatedPaths = findPathsDFS(successor, dist, newPath, updatedPaths)
         }
-        //exitProcess(1)
         return updatedPaths
     }
 

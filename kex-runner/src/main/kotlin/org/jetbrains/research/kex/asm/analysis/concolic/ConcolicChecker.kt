@@ -31,8 +31,7 @@ import org.jetbrains.research.kfg.ClassManager
 import org.jetbrains.research.kfg.ir.BasicBlock
 import org.jetbrains.research.kfg.ir.Method
 import org.jetbrains.research.kfg.ir.value.Value
-import org.jetbrains.research.kfg.ir.value.instruction.CallInst
-import org.jetbrains.research.kfg.ir.value.instruction.Instruction
+import org.jetbrains.research.kfg.ir.value.instruction.*
 import org.jetbrains.research.kfg.visitor.MethodVisitor
 import java.util.*
 
@@ -340,6 +339,9 @@ class ConcolicChecker(
         return builder.getInstructionState(block.terminator)
     }
 
+    private fun getStateByInst(inst: Instruction) =
+        PredicateStateAnalysis(cm).builder(inst.parent.parent).getInstructionState(inst)
+
     private suspend fun execute(method: Method, trace: Trace, ps: PredicateState): Trace? {
         val path = ps.path //mutated.path
         if (path in paths) {
@@ -399,23 +401,31 @@ class ConcolicChecker(
                 }
                 is BlockEntry -> {
                     currentBlock = action.block
+                    if(currentBlock.isEmpty)
+                        continue
                     val vert = currentBlock.instructions.first().find() ?: continue
                     set.add(vert)
                     continue
                 }
                 is BlockJump -> {
                     currentBlock = action.block
+                    if(currentBlock.isEmpty)
+                        continue
                     val vert = currentBlock.terminator.find() ?: continue
                     set.add(vert)
                     continue
                 }
                 is BlockBranch -> {
                     currentBlock = action.block
+                    if(currentBlock.isEmpty)
+                        continue
                     val vert = currentBlock.terminator.find() ?: continue
                     set.add(vert)
                 }
                 is BlockSwitch -> {
                     currentBlock = action.block
+                    if(currentBlock.isEmpty)
+                        continue
                     val vert = currentBlock.terminator.find() ?: continue
                     set.add(vert)
                 }
@@ -426,16 +436,18 @@ class ConcolicChecker(
 
     private suspend fun searchAlongPath(
         graph: StaticGraph, trace: Trace, path: MutableMap<Vertex, Vertex>,
-        failed: MutableSet<Vertex>, ud: Int
+        failed: MutableSet<Vertex>,
     ): Trace? {
         //fun Instruction.find() = graph.vertices.find {it.inst == this}
         var lastTrace = trace
         var numberMatched = 0
         var failedIterations = 0
 
-        while (true) {
-            var mismatch: Vertex? = null
+        var bound = path.values.filter{
+            it.inst is BranchInst || it.inst is SwitchInst || it.inst is TableSwitchInst }.size
 
+        while (bound > 0) {
+            var mismatch: Vertex? = null
             val set = traceToSetVertex(graph, lastTrace)
 
             numberMatched = 0
@@ -448,8 +460,8 @@ class ConcolicChecker(
                     mismatch = vert
                     break
                 }
-
             }
+
             if(numberMatched == set.size) {
                 log.debug("SAP: succeed")
                 return lastTrace
@@ -460,8 +472,12 @@ class ConcolicChecker(
                     lastTrace
                 else null
 
-            val ps = getState(mismatch.inst.parent)
+            if(mismatch == path.values.first())
+                mismatch = path.keys.first()
+
+            //val ps = getState(mismatch.inst.parent)
             //should we force mismatch.predecessor or mismatch.successor instead?
+            val ps = getStateByInst(mismatch.inst)
             mismatch.tries++
 
             if (ps == null || ps.isEmpty) {
@@ -495,9 +511,10 @@ class ConcolicChecker(
                 return lastTrace
             }
 
-            log.debug("SAP: an iteration of sap worked correctly")
-            continue
+            log.debug("SAP: an iteration of sap finished correctly")
+            bound--
         }
+        return lastTrace
     }
 
     //the search terminates in failure
@@ -540,17 +557,23 @@ class ConcolicChecker(
 
         while (true) {
 
-            if (failedIterations > 100) {
+            if (failedIterations > 20) {
                 log.debug("CFGDS: too many failed iterations in a row, exiting")
                 break
             }
 
             log.debug("another iteration of CFGDS")
-
             //graph.dropTries()
 
             log.debug("CFGDS: Searching for a branch to force...")
-            val found = graph.nextBranchToForce(failedToForce/*alreadyForced*/)
+            var found = graph.nextBranchToForce(failedToForce/*alreadyForced*/)
+
+            val uncoveredBranches = graph.vertices.filter{
+                (it.inst is BranchInst || it.inst is SwitchInst || it.inst is TableSwitchInst) && !it.isCovered }
+
+            if(found == null && uncoveredBranches.isNotEmpty()) {
+                found = uncoveredBranches.random()
+            }
 
             if (found == null) {
                 log.debug("CFGDS: Could not find a branch to force, exiting")
@@ -602,6 +625,8 @@ class ConcolicChecker(
                 else
                     Int.MAX_VALUE
 
+            val tries = found.tries
+
             log.debug("CFGDS: entering searchAlongPath")
 
             val pathList = graph.findPathsForSAP(found, ud)
@@ -620,7 +645,7 @@ class ConcolicChecker(
             var sapSucceed = false
 
             for (path in pathList) {
-                val trace = searchAlongPath(graph, lastTrace!!, path, failedToForce, ud)
+                val trace = searchAlongPath(graph, lastTrace!!, path, failedToForce)
                 yield()
                 if (trace == null || trace.actions.isNullOrEmpty()) {
                     log.debug("CFGDS: SAP did not succeed on current iteration")

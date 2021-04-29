@@ -3,12 +3,14 @@ package org.jetbrains.research.kex.asm.analysis.concolic
 import org.jetbrains.research.kfg.ir.BasicBlock
 import org.jetbrains.research.kfg.ir.value.instruction.*
 
-sealed class Vertex (open val inst: Instruction,
-                                       open val predecessors: MutableCollection<Vertex>,
-                                       open val successors: MutableCollection<Vertex>) {
+sealed class Vertex(
+    open val inst: Instruction,
+    open val predecessors: MutableCollection<Vertex>,
+    open val successors: MutableCollection<Vertex>
+) {
 
     val weights = mutableMapOf<Vertex, Int>()
-    var uncoveredDistance = Int.MAX_VALUE
+    var uncoveredDistance = Int.MAX_VALUE / 2
     var isCovered = false
     var nearestUncovered: Vertex? = null //???
     var prev: Vertex? = null
@@ -21,8 +23,8 @@ sealed class Vertex (open val inst: Instruction,
 
     override fun equals(other: Any?): Boolean {
         return if (other is Vertex)
-             //this.bb == other.bb && this.inst == other.inst
-             this.inst.parent == other.inst.parent && this.inst == other.inst
+        //this.bb == other.bb && this.inst == other.inst
+            this.inst.parent == other.inst.parent && this.inst == other.inst
         else false
     }
 
@@ -31,9 +33,11 @@ sealed class Vertex (open val inst: Instruction,
     }
 }
 
-data class Vert(override val inst: Instruction,
-                    override val predecessors: MutableCollection<Vertex>,
-                    override val successors: MutableCollection<Vertex>): Vertex(inst, predecessors, successors) {
+data class Vert(
+    override val inst: Instruction,
+    override val predecessors: MutableCollection<Vertex>,
+    override val successors: MutableCollection<Vertex>
+) : Vertex(inst, predecessors, successors) {
     override fun equals(other: Any?): Boolean {
         if (other is Vertex)
             return super.equals(other)
@@ -45,9 +49,11 @@ data class Vert(override val inst: Instruction,
     }
 }
 
-data class CallVert(override val inst: CallInst,
-                     override val predecessors: MutableCollection<Vertex>,
-                     override val successors: MutableCollection<Vertex>): Vertex(inst, predecessors, successors) {
+data class CallVert(
+    override val inst: CallInst,
+    override val predecessors: MutableCollection<Vertex>,
+    override val successors: MutableCollection<Vertex>
+) : Vertex(inst, predecessors, successors) {
     override fun equals(other: Any?): Boolean {
         if (other is Vertex)
             return super.equals(other)
@@ -60,9 +66,11 @@ data class CallVert(override val inst: CallInst,
 }
 
 
-data class TerminateVert(override val inst: TerminateInst,
-                        override val predecessors: MutableCollection<Vertex>,
-                        override val successors: MutableCollection<Vertex>):Vertex(inst, predecessors, successors) {
+data class TerminateVert(
+    override val inst: TerminateInst,
+    override val predecessors: MutableCollection<Vertex>,
+    override val successors: MutableCollection<Vertex>
+) : Vertex(inst, predecessors, successors) {
     override fun equals(other: Any?): Boolean {
         if (other is Vertex)
             return super.equals(other)
