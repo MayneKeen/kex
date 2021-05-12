@@ -20,7 +20,7 @@ import org.jetbrains.research.kex.state.PredicateState
 import org.jetbrains.research.kex.state.StateBuilder
 import org.jetbrains.research.kex.state.predicate.PredicateType
 import org.jetbrains.research.kex.state.predicate.inverse
-import org.jetbrains.research.kex.state.transformer.generateInputByModel
+//import org.jetbrains.research.kex.state.transformer.generateInputByModel
 import org.jetbrains.research.kex.statistics.Statistics
 import org.jetbrains.research.kex.trace.TraceManager
 import org.jetbrains.research.kex.trace.`object`.*
@@ -167,7 +167,6 @@ class ConcolicChecker(
                     }
                     builder.callMethod(action.method, ConcolicStateBuilder.CallParameters(action.returnValue, mappings))
                 }
-
                 is BlockJump -> {
                     val prevBlock = prevBlockStack.pop()
                     val current = action.block
@@ -286,6 +285,7 @@ class ConcolicChecker(
         }
     }
 
+
     private suspend fun getRandomTraceUntilSuccess(method: Method): Trace? {
         var trace: Trace? = null
         var iterations = 0
@@ -357,7 +357,8 @@ class ConcolicChecker(
         yield()
 
         val (instance, args) = tryOrNull {
-            generateInputByModel(ctx, method, checker.state, result.model)
+            generator.generate("test${++counter}", method, checker.state, result.model)
+            //generateInputByModel(ctx, method, checker.state, result.model)
         } ?: return null
         yield()
 
@@ -401,7 +402,7 @@ class ConcolicChecker(
                 }
                 is BlockEntry -> {
                     currentBlock = action.block
-                    if(currentBlock.isEmpty)
+                    if (currentBlock.isEmpty)
                         continue
                     val vert = currentBlock.instructions.first().find() ?: continue
                     set.add(vert)
@@ -409,7 +410,7 @@ class ConcolicChecker(
                 }
                 is BlockJump -> {
                     currentBlock = action.block
-                    if(currentBlock.isEmpty)
+                    if (currentBlock.isEmpty)
                         continue
                     val vert = currentBlock.terminator.find() ?: continue
                     set.add(vert)
@@ -417,14 +418,14 @@ class ConcolicChecker(
                 }
                 is BlockBranch -> {
                     currentBlock = action.block
-                    if(currentBlock.isEmpty)
+                    if (currentBlock.isEmpty)
                         continue
                     val vert = currentBlock.terminator.find() ?: continue
                     set.add(vert)
                 }
                 is BlockSwitch -> {
                     currentBlock = action.block
-                    if(currentBlock.isEmpty)
+                    if (currentBlock.isEmpty)
                         continue
                     val vert = currentBlock.terminator.find() ?: continue
                     set.add(vert)
@@ -434,67 +435,236 @@ class ConcolicChecker(
         return set
     }
 
+
+    private fun findMismatch(
+        method: Method,
+        graph: StaticGraph,
+        trace: Trace,
+        path: MutableList<Vertex>
+    ): PredicateState? {
+        data class BlockWrapper(val block: BasicBlock?)
+
+        fun BasicBlock.wrap() = BlockWrapper(this)
+
+        val methodStack = stackOf<Method>()
+        val prevBlockStack = stackOf<BlockWrapper>()
+        val filteredTrace = trace.actions.run {
+            var staticLevel = 0
+            filter {
+                when (it) {
+                    is StaticInitEntry -> {
+                        ++staticLevel
+                        false
+                    }
+                    is StaticInitExit -> {
+                        --staticLevel
+                        false
+                    }
+                    else -> staticLevel == 0
+                }
+            }
+        }.dropWhile { !(it is MethodEntry && it.method == method) }
+
+        fun Instruction.find() = graph.vertices.find { it.inst == this }
+        var currentBlock: BasicBlock? = null
+        val builder = ConcolicStateBuilder(cm, psa)
+        var completelyMatched = true
+        var prevVert = path.first()
+
+        for ((index, action) in filteredTrace.withIndex()) {
+            when (action) {
+                is MethodEntry -> {
+                    methodStack.push(action.method)
+                    prevBlockStack.push(BlockWrapper(null))
+                    builder.enterMethod(action.method)
+                    continue
+                }
+                is MethodReturn -> {
+                    val prevBlock = prevBlockStack.pop()
+                    val current = action.block
+                    val next = filteredTrace.getOrNull(index + 1) as? BlockAction
+                    builder.build(current, prevBlock.block, next?.block)
+                    methodStack.pop()
+                    builder.exitMethod(action.method)
+                    continue
+                }
+                is MethodThrow -> {
+                    val prevBlock = prevBlockStack.pop()
+                    val current = action.block
+                    val next = filteredTrace.getOrNull(index + 1) as? BlockAction
+                    builder.build(current, prevBlock.block, next?.block)
+                    methodStack.pop()
+                    builder.exitMethod(action.method)
+                    continue
+                }
+                is MethodCall -> {
+                    if (currentBlock == null || currentBlock.isEmpty) {
+                        val mappings = mutableMapOf<Value, Value>()
+                        action.instance?.run { mappings[values.getThis(action.method.`class`)] = this }
+                        action.args.withIndex().forEach { (index, arg) ->
+                            mappings[values.getArgument(index, action.method, action.method.argTypes[index])] = arg
+                        }
+                        builder.callMethod(
+                            action.method,
+                            ConcolicStateBuilder.CallParameters(action.returnValue, mappings)
+                        )
+                        continue
+                    }
+
+                    val callVerts = currentBlock.instructions.filterIsInstance<CallInst>()
+                    val vert = callVerts.find { it.method == action.method }?.find()!!
+
+                    if (/*vert == null ||*/ path.contains(vert)) {
+                        val mappings = mutableMapOf<Value, Value>()
+                        action.instance?.run { mappings[values.getThis(action.method.`class`)] = this }
+                        action.args.withIndex().forEach { (index, arg) ->
+                            mappings[values.getArgument(index, action.method, action.method.argTypes[index])] = arg
+                        }
+                        builder.callMethod(
+                            action.method,
+                            ConcolicStateBuilder.CallParameters(action.returnValue, mappings)
+                        )
+                        //if (vert != null)
+                        prevVert = vert
+                        continue
+                    }
+                    completelyMatched = false
+                    if (prevVert is TerminateVert) {
+                        builder.forceByType(prevVert, currentBlock, path)
+                        break
+                    }
+
+                }
+                is BlockEntry -> {
+                    currentBlock = action.block
+                    if (currentBlock.isEmpty)
+                        continue
+                    val vert = currentBlock.instructions.first().find()
+
+                    if (vert == null || path.contains(vert)) {
+                        continue
+                    }
+                    completelyMatched = false
+                    if (prevVert is TerminateVert) {
+                        builder.forceByType(prevVert, currentBlock, path)
+                        break
+                    }
+
+                    continue
+                }
+
+                is BlockJump -> {
+                    currentBlock = action.block
+                    if (currentBlock.isEmpty)
+                        continue
+                    val vert = currentBlock.terminator.find()
+                    if (vert == null || path.contains(vert)) {
+                        val prevBlock = prevBlockStack.pop()
+                        val current = action.block
+                        val next = filteredTrace.getOrNull(index + 1) as? BlockAction
+                        builder.build(current, prevBlock.block, next?.block)
+                        prevBlockStack.push(current.wrap())
+                        continue
+                    }
+                    completelyMatched = false
+                    if (prevVert is TerminateVert) {
+                        builder.forceByType(prevVert, currentBlock, path)
+                        break
+                    }
+                }
+                is BlockBranch -> {
+
+                    currentBlock = action.block
+                    if (currentBlock.isEmpty)
+                        log.debug("current block is empty")
+
+                    val vert = currentBlock.terminator.find()!!
+
+                    if (path.contains(vert)) {
+                        prevVert = vert
+                        val prevBlock = prevBlockStack.pop()
+                        val current = action.block
+                        val next = filteredTrace.getOrNull(index + 1) as? BlockAction
+                        builder.build(current, prevBlock.block, next?.block)
+                        prevBlockStack.push(current.wrap())
+                        continue
+                    }
+                    completelyMatched = false
+                    if (prevVert is TerminateVert) {
+                        builder.forceByType(prevVert, currentBlock, path)
+                        break
+                    }
+
+                }
+                is BlockSwitch -> {
+                    currentBlock = action.block
+                    if (currentBlock.isEmpty)
+                        log.debug("current block is empty")
+
+                    val vert = currentBlock.terminator.find()!!
+
+                    if (path.contains(vert)) {
+                        prevVert = vert
+                        val prevBlock = prevBlockStack.pop()
+                        val current = action.block
+                        val next = filteredTrace.getOrNull(index + 1) as? BlockAction
+                        builder.build(current, prevBlock.block, next?.block)
+                        prevBlockStack.push(current.wrap())
+                        continue
+                    }
+                    completelyMatched = false
+                    if (prevVert is TerminateVert) {
+                        builder.forceByType(prevVert, currentBlock, path)
+                        break
+                    }
+                }
+                else -> {
+                }
+            }
+        }
+        return if (completelyMatched)
+            null
+        else
+            builder.apply()
+    }
+
+
     private suspend fun searchAlongPath(
-        graph: StaticGraph, trace: Trace, path: MutableMap<Vertex, Vertex>,
+        graph: StaticGraph, trace: Trace, path: MutableList<Vertex>,
         failed: MutableSet<Vertex>,
     ): Trace? {
         //fun Instruction.find() = graph.vertices.find {it.inst == this}
         var lastTrace = trace
-        var numberMatched = 0
         var failedIterations = 0
 
-        var bound = path.values.filter{
-            it.inst is BranchInst || it.inst is SwitchInst || it.inst is TableSwitchInst }.size
+        var bound = path.filter {
+            it.inst is BranchInst || it.inst is SwitchInst || it.inst is TableSwitchInst
+        }.size
 
         while (bound > 0) {
-            var mismatch: Vertex? = null
-            val set = traceToSetVertex(graph, lastTrace)
+            val ps = findMismatch(graph.rootMethod, graph, trace, path)
 
-            numberMatched = 0
-
-            for (vert in path.values) {
-                if (set.contains(vert)) {
-                    numberMatched++
-                    continue
-                } else {
-                    mismatch = vert
-                    break
-                }
-            }
-
-            if(numberMatched == set.size) {
+            if (ps == null && lastTrace != trace) {
                 log.debug("SAP: succeed")
                 return lastTrace
             }
 
-            if (mismatch == null)
-                return if (numberMatched > 0)
-                    lastTrace
-                else null
-
-            if(mismatch == path.values.first())
-                mismatch = path.keys.first()
-
-            //val ps = getState(mismatch.inst.parent)
-            //should we force mismatch.predecessor or mismatch.successor instead?
-            val ps = getStateByInst(mismatch.inst)
-            mismatch.tries++
-
             if (ps == null || ps.isEmpty) {
                 log.debug("SAP: could not generate a predicateState")
-                failed.add(mismatch)       //same as above
-                return if (numberMatched > 0)
+                //failed.add(mismatch)       //same as above
+                return if (lastTrace != trace)
                     lastTrace
                 else null
             }
 
             val tempTrace = execute(graph.rootMethod, lastTrace, ps)
-            yield()
+            val tt =
+                yield()
+            bound--
 
             if (tempTrace == null || tempTrace.actions.isNullOrEmpty()) {
                 log.debug("SAP: could not process a trace...")
-                failed.add(mismatch)       //same as above
-                return if (numberMatched > 0)
+                return if (lastTrace != trace)
                     lastTrace
                 else null
             }
@@ -502,17 +672,16 @@ class ConcolicChecker(
             lastTrace = tempTrace
             val newBranchCovered = graph.addTrace(lastTrace)
 
-            if(!newBranchCovered) {
+            if (!newBranchCovered) {
                 log.debug("SAP: a failed iteration")
                 failedIterations++
             }
-            if(failedIterations > 20) {
+            if (failedIterations > 20) {
                 log.debug("SAP: did not succeed, too many failed iterations in a row")
                 return lastTrace
             }
 
             log.debug("SAP: an iteration of sap finished correctly")
-            bound--
         }
         return lastTrace
     }
@@ -568,10 +737,11 @@ class ConcolicChecker(
             log.debug("CFGDS: Searching for a branch to force...")
             var found = graph.nextBranchToForce(failedToForce/*alreadyForced*/)
 
-            val uncoveredBranches = graph.vertices.filter{
-                (it.inst is BranchInst || it.inst is SwitchInst || it.inst is TableSwitchInst) && !it.isCovered }
+            val uncoveredBranches = graph.vertices.filter {
+                (it.inst is BranchInst || it.inst is SwitchInst || it.inst is TableSwitchInst) && !it.isCovered
+            }
 
-            if(found == null && uncoveredBranches.isNotEmpty()) {
+            if (found == null && uncoveredBranches.isNotEmpty()) {
                 found = uncoveredBranches.random()
             }
 
@@ -620,7 +790,7 @@ class ConcolicChecker(
             }
 
             val ud =
-                if(found.uncoveredDistance + found.tries > 0)
+                if (found.uncoveredDistance + found.tries > 0)
                     found.uncoveredDistance + found.tries
                 else
                     Int.MAX_VALUE
@@ -636,8 +806,7 @@ class ConcolicChecker(
                 log.debug("CFGDS: No path found for SAP, continuing")
                 found.tries += 1
                 continue
-            }
-            else {
+            } else {
                 log.debug("CFGDS: A path for SAP has been found")
 
             }

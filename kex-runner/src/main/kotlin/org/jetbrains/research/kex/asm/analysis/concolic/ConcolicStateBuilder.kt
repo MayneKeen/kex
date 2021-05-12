@@ -7,6 +7,8 @@ import org.jetbrains.research.kex.state.BasicState
 import org.jetbrains.research.kex.state.PredicateState
 import org.jetbrains.research.kex.state.StateBuilder
 import org.jetbrains.research.kex.state.predicate.path
+import org.jetbrains.research.kex.state.predicate.predicate
+import org.jetbrains.research.kex.state.predicate.require
 import org.jetbrains.research.kex.state.predicate.state
 import org.jetbrains.research.kex.state.term.Term
 import org.jetbrains.research.kex.state.term.term
@@ -23,6 +25,7 @@ import org.jetbrains.research.kfg.ir.value.instruction.*
 import org.jetbrains.research.kfg.type.ClassType
 import org.jetbrains.research.kthelper.collection.listOf
 import org.jetbrains.research.kthelper.collection.stackOf
+import org.jetbrains.research.kthelper.logging.log
 
 class UnsupportedInstructionException(val inst: Instruction) : Exception(inst.print())
 class InvalidStateException(msg: String) : Exception(msg)
@@ -128,6 +131,69 @@ class ConcolicStateBuilder(val cm: ClassManager, val psa: PredicateStateAnalysis
         val v = newValue(value)
         valueMap[value] = v
         return v
+    }
+
+
+    fun createForce(inst: BranchInst, branch: BasicBlock) {
+        stateBuilder += require(inst.location) {
+            val condition = mkValue(inst.cond)
+            if (inst.trueSuccessor == branch)
+                condition equality true
+            else
+                condition equality false
+        }
+    }
+
+    fun createForce(inst: SwitchInst, branch: BasicBlock) {
+        stateBuilder += require(inst.location) {
+            val condition = mkValue(inst.key)
+            for (key in inst.branches.keys)
+                if (branch == inst.branches[key])
+                    return@require condition equality mkValue(key)
+            condition `!in` inst.branches.keys.map { mkValue(it) }
+        }
+    }
+
+    fun createForce(inst: TableSwitchInst, branch: BasicBlock) {
+        stateBuilder += require(inst.location) {
+            val condition = mkValue(inst.index)
+
+            val min = (inst.min as IntConstant).value
+            val max = (inst.max as IntConstant).value
+
+            for (ind in min..max) {
+                if (branch == inst.branches[ind - min]) {
+                    return@require condition equality ind
+                }
+            }
+            condition `!in` (min..max).map { const(it) }
+        }
+    }
+
+    fun forceByType(prevVert: TerminateVert, currentBlock: BasicBlock, path: MutableList<Vertex>) {
+        val index = path.indexOf(prevVert) + 1
+        if (path.size < index) {
+            log.debug("Could not force cos path.size is too low")
+        }
+        val next = path[index].inst.parent
+
+        when (val prevInst = prevVert.inst) {
+            is BranchInst -> {
+                createForce(prevInst, next)
+                return
+            }
+            is SwitchInst -> {
+                createForce(prevInst, next)
+                return
+            }
+            is TableSwitchInst -> {
+                createForce(prevInst, next)
+                return
+            }
+            else -> {
+                return
+            }
+        }
     }
 
     fun buildPhiInst(inst: PhiInst, entry: BasicBlock) {
@@ -269,7 +335,8 @@ class ConcolicStateBuilder(val cm: ClassManager, val psa: PredicateStateAnalysis
     }
 
     @Suppress("UNUSED_PARAMETER")
-    fun buildCatchInst(inst: CatchInst) {}
+    fun buildCatchInst(inst: CatchInst) {
+    }
 
     fun buildCmpInst(inst: CmpInst) {
         stateBuilder += state(inst.location) {
@@ -281,10 +348,12 @@ class ConcolicStateBuilder(val cm: ClassManager, val psa: PredicateStateAnalysis
     }
 
     @Suppress("UNUSED_PARAMETER")
-    fun buildEnterMonitorInst(inst: EnterMonitorInst) {}
+    fun buildEnterMonitorInst(inst: EnterMonitorInst) {
+    }
 
     @Suppress("UNUSED_PARAMETER")
-    fun buildExitMonitorInst(inst: ExitMonitorInst) {}
+    fun buildExitMonitorInst(inst: ExitMonitorInst) {
+    }
 
     fun buildFieldLoadInst(inst: FieldLoadInst) {
         stateBuilder += state(inst.location) {
@@ -359,7 +428,8 @@ class ConcolicStateBuilder(val cm: ClassManager, val psa: PredicateStateAnalysis
     }
 
     @Suppress("UNUSED_PARAMETER")
-    fun buildJumpInst(inst: JumpInst, next: BasicBlock) {}
+    fun buildJumpInst(inst: JumpInst, next: BasicBlock) {
+    }
 
     fun buildReturnInst(inst: ReturnInst) {
         stateBuilder += state(inst.location) {
@@ -410,8 +480,10 @@ class ConcolicStateBuilder(val cm: ClassManager, val psa: PredicateStateAnalysis
     }
 
     @Suppress("UNUSED_PARAMETER")
-    fun buildThrowInst(inst: ThrowInst) {}
+    fun buildThrowInst(inst: ThrowInst) {
+    }
 
     @Suppress("UNUSED_PARAMETER")
-    fun buildUnreachableInst(inst: UnreachableInst) {}
+    fun buildUnreachableInst(inst: UnreachableInst) {
+    }
 }

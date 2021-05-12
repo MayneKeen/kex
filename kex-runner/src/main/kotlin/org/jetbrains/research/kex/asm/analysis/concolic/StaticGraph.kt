@@ -383,8 +383,30 @@ class StaticGraph(enterPoint: Method) {
         }
     }
 
-    fun findPathsForSAP(curr: Vertex, ud: Int): MutableList<MutableMap<Vertex, Vertex>> {
-        val paths = findPathsDFS(curr, ud, mutableMapOf(), mutableListOf())
+
+
+//
+//    fun findPathsForSAP(curr: Vertex, ud: Int): MutableList<MutableMap<Vertex, Vertex>> {
+//        val paths = findPathsDFS(curr, ud, mutableMapOf(), mutableListOf())
+//
+//        if (paths.isEmpty())
+//            return mutableListOf()
+//
+//        val iterator = paths.iterator()
+//        while (iterator.hasNext()) {
+//            val path = iterator.next()
+//            val uncoveredSet = path.values.filter { !it.isCovered }.toMutableSet()
+//            if (uncoveredSet.isNullOrEmpty()) {
+//                iterator.remove()
+//            }
+//        }
+//        return if (paths.isEmpty())
+//            mutableListOf()
+//        else paths
+//    }
+
+    fun findPathsForSAP(curr: Vertex, ud: Int): MutableList<MutableList<Vertex>> {
+        val paths = findPathsDFS(curr, ud, mutableListOf(), mutableListOf())
 
         if (paths.isEmpty())
             return mutableListOf()
@@ -392,7 +414,7 @@ class StaticGraph(enterPoint: Method) {
         val iterator = paths.iterator()
         while (iterator.hasNext()) {
             val path = iterator.next()
-            val uncoveredSet = path.values.filter { !it.isCovered }.toMutableSet()
+            val uncoveredSet = path.filter { !it.isCovered }.toMutableSet()
             if (uncoveredSet.isNullOrEmpty()) {
                 iterator.remove()
             }
@@ -403,9 +425,9 @@ class StaticGraph(enterPoint: Method) {
     }
 
     private fun findPathsDFS(
-        curr: Vertex, ud: Int, path: MutableMap<Vertex, Vertex>,
-        paths: MutableList<MutableMap<Vertex, Vertex>>
-    ): MutableList<MutableMap<Vertex, Vertex>> {
+        curr: Vertex, ud: Int, path: MutableList<Vertex>,
+        paths: MutableList<MutableList<Vertex>>
+    ): MutableList<MutableList<Vertex>> {
 
         var updatedPaths = paths
 
@@ -425,14 +447,49 @@ class StaticGraph(enterPoint: Method) {
                 return updatedPaths
             }
 
-            val newPath = mutableMapOf<Vertex, Vertex>()
-            newPath.putAll(path)
-            newPath[curr] = successor
+            val newPath = mutableListOf<Vertex>()
+            newPath.addAll(path)
+            if(!newPath.contains(curr))
+                newPath.add(curr)
+            newPath.add(successor)
 
             updatedPaths = findPathsDFS(successor, dist, newPath, updatedPaths)
         }
         return updatedPaths
     }
+
+//
+//    private fun findPathsDFS(
+//        curr: Vertex, ud: Int, path: MutableMap<Vertex, Vertex>,
+//        paths: MutableList<MutableMap<Vertex, Vertex>>
+//    ): MutableList<MutableMap<Vertex, Vertex>> {
+//
+//        var updatedPaths = paths
+//
+//        if (curr.successors.isEmpty()) {
+//            if (path.isEmpty())
+//                return updatedPaths
+//
+//            updatedPaths.add(path)
+//            return updatedPaths
+//        }
+//
+//        for (successor in curr.successors) {
+//            val dist = ud - curr.weights[successor]!!
+//            print("dist is $dist")
+//            print("${path.size}")
+//            if (dist < 0) {
+//                return updatedPaths
+//            }
+//
+//            val newPath = mutableMapOf<Vertex, Vertex>()
+//            newPath.putAll(path)
+//            newPath[curr] = successor
+//
+//            updatedPaths = findPathsDFS(successor, dist, newPath, updatedPaths)
+//        }
+//        return updatedPaths
+//    }
 
     fun dropTries() = vertices.forEach { it.tries = 0 }
 
