@@ -345,7 +345,7 @@ class ConcolicChecker(
     private suspend fun execute(method: Method, trace: Trace, ps: PredicateState): Trace? {
         val path = ps.path //mutated.path
         if (path in paths) {
-            log.debug("Generated already existing path")
+            log.debug("Generated an already existing path")
             return null
         }
         log.debug("New trace: $ps")
@@ -435,7 +435,6 @@ class ConcolicChecker(
         return set
     }
 
-
     private fun findMismatch(
         method: Method,
         graph: StaticGraph,
@@ -512,9 +511,9 @@ class ConcolicChecker(
                     }
 
                     val callVerts = currentBlock.instructions.filterIsInstance<CallInst>()
-                    val vert = callVerts.find { it.method == action.method }?.find()!!
+                    val vert = callVerts.find { it.method == action.method }?.find()
 
-                    if (/*vert == null ||*/ path.contains(vert)) {
+                    if (vert == null || path.contains(vert)) {
                         val mappings = mutableMapOf<Value, Value>()
                         action.instance?.run { mappings[values.getThis(action.method.`class`)] = this }
                         action.args.withIndex().forEach { (index, arg) ->
@@ -524,8 +523,8 @@ class ConcolicChecker(
                             action.method,
                             ConcolicStateBuilder.CallParameters(action.returnValue, mappings)
                         )
-                        //if (vert != null)
-                        prevVert = vert
+                        if (vert != null)
+                            prevVert = vert
                         continue
                     }
                     completelyMatched = false
@@ -629,10 +628,37 @@ class ConcolicChecker(
     }
 
 
+    private fun getPaths(graph: StaticGraph, trace: Trace, vertex: Vertex, ud: Int): MutableList<MutableList<Vertex>> {
+        val paths = graph.findPathsForSAP(vertex, ud)
+        if(paths.isEmpty())
+            return mutableListOf()
+        val traceVertices = traceToSetVertex(graph, trace)
+        if(!traceVertices.contains(vertex)) {
+            log.debug("Graph: smth went wrong, vertex is not in trace")
+            return mutableListOf()
+        }
+        val pathBeginning = mutableListOf<Vertex>()
+        val result = mutableListOf<MutableList<Vertex>>()
+
+        for(v in traceVertices)
+            if(v == vertex)
+                break
+            else
+                pathBeginning.add(v)
+
+       for(path in paths) {
+           val list = mutableListOf<Vertex>()
+           list.addAll(pathBeginning)
+           list.addAll(path)
+           result.add(list)
+       }
+        return result
+    }
+
+
     private suspend fun searchAlongPath(
         graph: StaticGraph, trace: Trace, path: MutableList<Vertex>,
-        failed: MutableSet<Vertex>,
-    ): Trace? {
+        ): Trace? {
         //fun Instruction.find() = graph.vertices.find {it.inst == this}
         var lastTrace = trace
         var failedIterations = 0
@@ -658,8 +684,7 @@ class ConcolicChecker(
             }
 
             val tempTrace = execute(graph.rootMethod, lastTrace, ps)
-            val tt =
-                yield()
+            yield()
             bound--
 
             if (tempTrace == null || tempTrace.actions.isNullOrEmpty()) {
@@ -795,11 +820,9 @@ class ConcolicChecker(
                 else
                     Int.MAX_VALUE
 
-            val tries = found.tries
-
             log.debug("CFGDS: entering searchAlongPath")
 
-            val pathList = graph.findPathsForSAP(found, ud)
+            val pathList = getPaths(graph, lastTrace, found, ud)
             yield()
 
             if (pathList.isEmpty()) {
@@ -810,11 +833,9 @@ class ConcolicChecker(
                 log.debug("CFGDS: A path for SAP has been found")
 
             }
-
             var sapSucceed = false
-
             for (path in pathList) {
-                val trace = searchAlongPath(graph, lastTrace!!, path, failedToForce)
+                val trace = searchAlongPath(graph, lastTrace!!, path)
                 yield()
                 if (trace == null || trace.actions.isNullOrEmpty()) {
                     log.debug("CFGDS: SAP did not succeed on current iteration")
