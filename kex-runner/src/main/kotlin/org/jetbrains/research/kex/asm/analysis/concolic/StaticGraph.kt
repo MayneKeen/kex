@@ -171,9 +171,9 @@ class StaticGraph(enterPoint: Method) {
 
     private fun coverStaticPath(actions: List<Action>): Boolean {
         var newBranchCovered = false
+        var prev:Vertex? = null
+        var currentBlock: BasicBlock? = null
         for (action in actions) {
-            var currentBlock: BasicBlock? = null
-
             when (action) {
                 is MethodEntry -> {
                     if (action.method.hasBody) {
@@ -191,7 +191,15 @@ class StaticGraph(enterPoint: Method) {
                 is MethodCall -> {
                     if (currentBlock != null && currentBlock.isNotEmpty) {
                         val temp = currentBlock.instructions.filterIsInstance<CallInst>()
-                        temp.find { it.method == action.method }?.find()?.isCovered = true
+                        val vert = temp.find { it.method == action.method }?.find()
+
+                        if(vert != null && prev != null && prev is TerminateVert &&
+                            (prev.inst is BranchInst || prev.inst is SwitchInst || prev.inst is TableSwitchInst)
+                            && !vert.isCovered) {
+                            newBranchCovered = true
+                        }
+                        vert?.isCovered = true
+                        prev = vert
                     }
                 }
                 is StaticInitEntry -> {
@@ -205,7 +213,14 @@ class StaticGraph(enterPoint: Method) {
                     if (currentBlock.isEmpty)
                         continue
                     val vert = currentBlock.instructions.first().find()
+
+                    if(vert != null && prev != null && prev is TerminateVert &&
+                        (prev.inst is BranchInst || prev.inst is SwitchInst || prev.inst is TableSwitchInst)
+                        && !vert.isCovered) {
+                        newBranchCovered = true
+                    }
                     vert?.isCovered = true
+                    prev = vert
                 }
                 is BlockJump -> {
                     currentBlock = action.block
@@ -215,7 +230,13 @@ class StaticGraph(enterPoint: Method) {
                         inst.find()?.isCovered = true
                     }
                     val vert = currentBlock.terminator.find()
+                    if(vert != null && prev != null && prev is TerminateVert &&
+                        (prev.inst is BranchInst || prev.inst is SwitchInst || prev.inst is TableSwitchInst)
+                        && !vert.isCovered) {
+                        newBranchCovered = true
+                    }
                     vert?.isCovered = true
+                    prev = vert
                 }
                 is BlockBranch -> {
                     currentBlock = action.block
@@ -228,6 +249,7 @@ class StaticGraph(enterPoint: Method) {
                     for (inst in currentBlock.instructions) {
                         inst.find()?.isCovered = true
                     }
+                    prev = vert
                 }
                 is BlockSwitch -> {
                     currentBlock = action.block
@@ -240,6 +262,7 @@ class StaticGraph(enterPoint: Method) {
                     for (inst in currentBlock.instructions) {
                         inst.find()?.isCovered = true
                     }
+                    prev = vert
                 }
             }
         }
@@ -383,28 +406,6 @@ class StaticGraph(enterPoint: Method) {
         }
     }
 
-
-
-//
-//    fun findPathsForSAP(curr: Vertex, ud: Int): MutableList<MutableMap<Vertex, Vertex>> {
-//        val paths = findPathsDFS(curr, ud, mutableMapOf(), mutableListOf())
-//
-//        if (paths.isEmpty())
-//            return mutableListOf()
-//
-//        val iterator = paths.iterator()
-//        while (iterator.hasNext()) {
-//            val path = iterator.next()
-//            val uncoveredSet = path.values.filter { !it.isCovered }.toMutableSet()
-//            if (uncoveredSet.isNullOrEmpty()) {
-//                iterator.remove()
-//            }
-//        }
-//        return if (paths.isEmpty())
-//            mutableListOf()
-//        else paths
-//    }
-
     fun findPathsForSAP(curr: Vertex, ud: Int): MutableList<MutableList<Vertex>> {
         val paths = findPathsDFS(curr, ud, mutableListOf(), mutableListOf())
 
@@ -457,39 +458,6 @@ class StaticGraph(enterPoint: Method) {
         }
         return updatedPaths
     }
-
-//
-//    private fun findPathsDFS(
-//        curr: Vertex, ud: Int, path: MutableMap<Vertex, Vertex>,
-//        paths: MutableList<MutableMap<Vertex, Vertex>>
-//    ): MutableList<MutableMap<Vertex, Vertex>> {
-//
-//        var updatedPaths = paths
-//
-//        if (curr.successors.isEmpty()) {
-//            if (path.isEmpty())
-//                return updatedPaths
-//
-//            updatedPaths.add(path)
-//            return updatedPaths
-//        }
-//
-//        for (successor in curr.successors) {
-//            val dist = ud - curr.weights[successor]!!
-//            print("dist is $dist")
-//            print("${path.size}")
-//            if (dist < 0) {
-//                return updatedPaths
-//            }
-//
-//            val newPath = mutableMapOf<Vertex, Vertex>()
-//            newPath.putAll(path)
-//            newPath[curr] = successor
-//
-//            updatedPaths = findPathsDFS(successor, dist, newPath, updatedPaths)
-//        }
-//        return updatedPaths
-//    }
 
     fun dropTries() = vertices.forEach { it.tries = 0 }
 

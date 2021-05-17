@@ -133,8 +133,7 @@ class ConcolicStateBuilder(val cm: ClassManager, val psa: PredicateStateAnalysis
         return v
     }
 
-
-    fun createForce(inst: BranchInst, branch: BasicBlock) {
+    private fun createForce(inst: BranchInst, branch: BasicBlock) {
         stateBuilder += require(inst.location) {
             val condition = mkValue(inst.cond)
             if (inst.trueSuccessor == branch)
@@ -144,7 +143,7 @@ class ConcolicStateBuilder(val cm: ClassManager, val psa: PredicateStateAnalysis
         }
     }
 
-    fun createForce(inst: SwitchInst, branch: BasicBlock) {
+    private fun createForce(inst: SwitchInst, branch: BasicBlock) {
         stateBuilder += require(inst.location) {
             val condition = mkValue(inst.key)
             for (key in inst.branches.keys)
@@ -154,7 +153,7 @@ class ConcolicStateBuilder(val cm: ClassManager, val psa: PredicateStateAnalysis
         }
     }
 
-    fun createForce(inst: TableSwitchInst, branch: BasicBlock) {
+    private fun createForce(inst: TableSwitchInst, branch: BasicBlock) {
         stateBuilder += require(inst.location) {
             val condition = mkValue(inst.index)
 
@@ -174,19 +173,23 @@ class ConcolicStateBuilder(val cm: ClassManager, val psa: PredicateStateAnalysis
         val index = path.indexOf(prevVert) + 1
         if (path.size < index) {
             log.debug("Could not force cos path.size is too low")
+            return
         }
         val next = path[index].inst.parent
 
         when (val prevInst = prevVert.inst) {
             is BranchInst -> {
+                prevVert.tries += 1
                 createForce(prevInst, next)
                 return
             }
             is SwitchInst -> {
+                prevVert.tries += 1
                 createForce(prevInst, next)
                 return
             }
             is TableSwitchInst -> {
+                prevVert.tries += 1
                 createForce(prevInst, next)
                 return
             }

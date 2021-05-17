@@ -331,6 +331,9 @@ class ConcolicChecker(
         }
         val graph = StaticGraph(method)
         cfgds(graph)
+        yield()
+
+        return
     }
 
     private fun getState(block: BasicBlock): PredicateState? {
@@ -627,7 +630,6 @@ class ConcolicChecker(
             builder.apply()
     }
 
-
     private fun getPaths(graph: StaticGraph, trace: Trace, vertex: Vertex, ud: Int): MutableList<MutableList<Vertex>> {
         val paths = graph.findPathsForSAP(vertex, ud)
         if(paths.isEmpty())
@@ -654,7 +656,6 @@ class ConcolicChecker(
        }
         return result
     }
-
 
     private suspend fun searchAlongPath(
         graph: StaticGraph, trace: Trace, path: MutableList<Vertex>,
@@ -804,7 +805,6 @@ class ConcolicChecker(
 
             if (!newBranchCovered) {
                 failedIterations++
-                //failedToForce.add(found)
                 log.debug("CFGDS: Processing a trace was successful, but no new branches are covered")
             } else {
                 failedIterations = 0
