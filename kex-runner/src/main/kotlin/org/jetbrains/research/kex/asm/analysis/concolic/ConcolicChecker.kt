@@ -28,6 +28,7 @@ import org.jetbrains.research.kex.trace.runner.ObjectTracingRunner
 import org.jetbrains.research.kex.trace.runner.RandomObjectTracingRunner
 import org.jetbrains.research.kex.trace.runner.TimeoutException
 import org.jetbrains.research.kfg.ClassManager
+import org.jetbrains.research.kfg.Package
 import org.jetbrains.research.kfg.ir.BasicBlock
 import org.jetbrains.research.kfg.ir.Method
 import org.jetbrains.research.kfg.ir.value.Value
@@ -41,7 +42,8 @@ private val onlyMain by lazy { kexConfig.getBooleanValue("concolic", "main-only"
 class ConcolicChecker(
     val ctx: ExecutionContext,
     val psa: PredicateStateAnalysis,
-    private val manager: TraceManager<Trace>
+    private val manager: TraceManager<Trace>,
+    val target: Package
 ) : MethodVisitor {
     override val cm: ClassManager get() = ctx.cm
     val loader: ClassLoader get() = ctx.loader
@@ -59,7 +61,7 @@ class ConcolicChecker(
         generator = Reanimator(ctx, psa, method)
     }
 
-    private fun analyze(method: Method) {
+    private fun analyze(method: Method, target: Package) {
         log.debug(method.print())
         initializeGenerator(method)
         try {
@@ -67,7 +69,7 @@ class ConcolicChecker(
                 withTimeout(timeLimit) {
                     try {
                         //process(method)
-                        processCFGDS(method)
+                        processCFGDS(method, target)
                     } catch (e: TimeoutException) {
                         log.debug("Timeout on running $method")
                     }
@@ -107,7 +109,7 @@ class ConcolicChecker(
         if (method.isStaticInitializer || method.isAbstract) return
 
         if ((onlyMain && method.name == "main") || !onlyMain) {
-            analyze(method)
+            analyze(method, target)
         }
     }
 
@@ -324,12 +326,12 @@ class ConcolicChecker(
         return resultingTrace
     }
 
-    private suspend fun processCFGDS(method: Method) {
+    private suspend fun processCFGDS(method: Method, target: Package) {
         if (!method.hasBody) {
             log.debug("Method $method is empty or has empty body")
             return
         }
-        val graph = StaticGraph(method)
+        val graph = StaticGraph(method, target)
         cfgds(graph)
         yield()
 

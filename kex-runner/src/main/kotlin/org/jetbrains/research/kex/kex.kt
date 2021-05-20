@@ -299,7 +299,7 @@ class Kex(args: Array<String>) {
         val cm = CoverageCounter(originalContext.cm, traceManager)
 
         runPipeline(analysisContext) {
-            +ConcolicChecker(analysisContext, psa, traceManager)
+            +ConcolicChecker(analysisContext, psa, traceManager, `package`)
             +cm
         }
 

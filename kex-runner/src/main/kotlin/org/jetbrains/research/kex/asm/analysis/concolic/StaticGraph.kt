@@ -3,10 +3,11 @@ package org.jetbrains.research.kex.asm.analysis.concolic
 import org.jetbrains.research.kthelper.collection.queueOf
 import org.jetbrains.research.kthelper.logging.log
 import org.jetbrains.research.kex.trace.`object`.*
+import org.jetbrains.research.kfg.Package
 import org.jetbrains.research.kfg.ir.*
 import org.jetbrains.research.kfg.ir.value.instruction.*
 
-class StaticGraph(enterPoint: Method) {
+class StaticGraph(enterPoint: Method, target: Package) {
 
     val vertices = mutableSetOf<Vertex>()
 
@@ -34,6 +35,30 @@ class StaticGraph(enterPoint: Method) {
             Vert(instruction, mutableSetOf(), mutableSetOf())
         }
     }
+
+    private fun Method.isInteresting() = when {
+            this.isAbstract -> false
+            this.isStaticInitializer -> false
+
+            !this.hasBody -> false
+            this.isConstructor -> false
+            else -> true
+        }
+
+//    private fun getAllOverrides(method: Method): Set<Method> =
+//        method.cm.getAllSubtypesOf(method.`class`)
+//            .filterIsInstance<ConcreteClass>()
+//            .map { it.getMethod(method.name, method.desc) }.filter{ it.isInteresting() }
+//            .toSet()
+
+
+    private fun getAllOverrides(target: Package, method: Method): Set<Method> =
+        method.cm.getAllSubtypesOf(method.`class`)
+            .filterIsInstance<ConcreteClass>()
+            .filter { target.isParent(it.`package`) }
+            .map { it.getMethod(method.name, method.desc) }.filter { it.isInteresting() }
+            .toSet()
+
 
     private fun addWeight(from: Vertex?, to: Vertex?, weight: Int): Boolean {
         if (from == null || to == null || weight <= -2  /*|| !from.successors.contains(to) */)
@@ -84,7 +109,7 @@ class StaticGraph(enterPoint: Method) {
         val temp = rootMethod.entry.first()
         root = wrapAndAddInst(temp, null)
         vertices.add(root)
-        buildGraph(root)
+        buildGraph(root, target)
     }
 
 
@@ -102,11 +127,14 @@ class StaticGraph(enterPoint: Method) {
         return result
     }
 
-    private fun buildGraph(start: Vertex) {
+    private fun buildGraph(start: Vertex, target: Package) {
         var current = mutableSetOf<Vertex>()
         current.add(start)
         var next = mutableSetOf<Vertex>()
         val visited = mutableSetOf<Vertex>()
+
+        //val wrappedMethods = mutableSetOf<Method>()
+
 
         while (true) {
             current = current.filter { !visited.contains(it) }.toMutableSet()
@@ -127,8 +155,17 @@ class StaticGraph(enterPoint: Method) {
                     }
 
                     is CallVert -> {
-                        if (vertex.inst.method.isNotEmpty())
-                            next.add(wrapAndAddInst(vertex.inst.method.entry.first(), vertex))
+                        if (vertex.inst.method.isNotEmpty()) {
+                            //next.add(wrapAndAddInst(vertex.inst.method.entry.first(), vertex))
+                            val overrides = getAllOverrides(target ,vertex.inst.method).filter { it.isNotEmpty() }
+                            log.debug("overrides.size = ${overrides.size}")
+
+                            overrides.forEach {
+                                next.add(wrapAndAddInst(it.entry.first(), vertex))
+                                log.debug("Graph: Wrapping method $it successful")
+                            }
+
+                        }
                         else {
                             log.debug("Wrapping CallInst failed: method is empty")
                         }
@@ -142,6 +179,7 @@ class StaticGraph(enterPoint: Method) {
                 }
                 visited.add(vertex)
             }//current loop ends
+            next = next.filter{!current.contains(it)}.toMutableSet()
 
             current = next
             next = mutableSetOf()
@@ -172,11 +210,13 @@ class StaticGraph(enterPoint: Method) {
     private fun coverStaticPath(actions: List<Action>): Boolean {
         var newBranchCovered = false
         var prev:Vertex? = null
+        var prevBlock: BasicBlock? = null
         var currentBlock: BasicBlock? = null
         for (action in actions) {
             when (action) {
                 is MethodEntry -> {
                     if (action.method.hasBody) {
+                        prevBlock = currentBlock
                         currentBlock = action.method.entry
                         currentBlock.instructions.first().find()?.isCovered = true
                     }
@@ -193,13 +233,15 @@ class StaticGraph(enterPoint: Method) {
                         val temp = currentBlock.instructions.filterIsInstance<CallInst>()
                         val vert = temp.find { it.method == action.method }?.find()
 
-                        if(vert != null && prev != null && prev is TerminateVert &&
-                            (prev.inst is BranchInst || prev.inst is SwitchInst || prev.inst is TableSwitchInst)
-                            && !vert.isCovered) {
+//                        if(vert != null && prev != null && prev is TerminateVert &&
+//                            (prev.inst is BranchInst || prev.inst is SwitchInst || prev.inst is TableSwitchInst) && !vert.isCovered)
+                        if (vert != null && prevBlock != null && prevBlock.isNotEmpty &&
+                            (prevBlock.terminator is BranchInst || prevBlock.terminator is SwitchInst ||
+                                    prevBlock.terminator is TableSwitchInst) && !vert.isCovered) {
                             newBranchCovered = true
                         }
                         vert?.isCovered = true
-                        prev = vert
+//                        prev = vert
                     }
                 }
                 is StaticInitEntry -> {
@@ -209,18 +251,22 @@ class StaticGraph(enterPoint: Method) {
                     continue
                 }
                 is BlockEntry -> {
+                    prevBlock = currentBlock
                     currentBlock = action.block
                     if (currentBlock.isEmpty)
                         continue
                     val vert = currentBlock.instructions.first().find()
 
-                    if(vert != null && prev != null && prev is TerminateVert &&
-                        (prev.inst is BranchInst || prev.inst is SwitchInst || prev.inst is TableSwitchInst)
-                        && !vert.isCovered) {
+//                    if(vert != null && prev != null && prev is TerminateVert &&
+//                        (prev.inst is BranchInst || prev.inst is SwitchInst || prev.inst is TableSwitchInst)
+//                        && !vert.isCovered) {
+                    if (vert != null && prevBlock != null && prevBlock.isNotEmpty &&
+                        (prevBlock.terminator is BranchInst || prevBlock.terminator is SwitchInst ||
+                                prevBlock.terminator is TableSwitchInst) && !vert.isCovered) {
                         newBranchCovered = true
                     }
                     vert?.isCovered = true
-                    prev = vert
+//                    prev = vert
                 }
                 is BlockJump -> {
                     currentBlock = action.block
@@ -230,13 +276,16 @@ class StaticGraph(enterPoint: Method) {
                         inst.find()?.isCovered = true
                     }
                     val vert = currentBlock.terminator.find()
-                    if(vert != null && prev != null && prev is TerminateVert &&
-                        (prev.inst is BranchInst || prev.inst is SwitchInst || prev.inst is TableSwitchInst)
-                        && !vert.isCovered) {
+//                    if(vert != null && prev != null && prev is TerminateVert &&
+//                        (prev.inst is BranchInst || prev.inst is SwitchInst || prev.inst is TableSwitchInst)
+//                        && !vert.isCovered) {
+                    if(vert != null && prevBlock != null && prevBlock.isNotEmpty &&
+                        (prevBlock.terminator is BranchInst || prevBlock.terminator is SwitchInst ||
+                                prevBlock.terminator is TableSwitchInst) && !vert.isCovered) {
                         newBranchCovered = true
                     }
                     vert?.isCovered = true
-                    prev = vert
+//                    prev = vert
                 }
                 is BlockBranch -> {
                     currentBlock = action.block
@@ -246,10 +295,17 @@ class StaticGraph(enterPoint: Method) {
                     if (!vert.isCovered) {
                         newBranchCovered = true
                     }
+
+                    if(prevBlock != null && prevBlock.isNotEmpty &&
+                        (prevBlock.terminator is BranchInst || prevBlock.terminator is SwitchInst ||
+                                prevBlock.terminator is TableSwitchInst) && !vert.isCovered) {
+                        newBranchCovered = true
+                    }
+
                     for (inst in currentBlock.instructions) {
                         inst.find()?.isCovered = true
                     }
-                    prev = vert
+//                    prev = vert
                 }
                 is BlockSwitch -> {
                     currentBlock = action.block
@@ -259,10 +315,17 @@ class StaticGraph(enterPoint: Method) {
                     if (!vert.isCovered) {
                         newBranchCovered = true
                     }
+
+                    if(prevBlock != null && prevBlock.isNotEmpty &&
+                        (prevBlock.terminator is BranchInst || prevBlock.terminator is SwitchInst ||
+                                prevBlock.terminator is TableSwitchInst) && !vert.isCovered) {
+                        newBranchCovered = true
+                    }
+
                     for (inst in currentBlock.instructions) {
                         inst.find()?.isCovered = true
                     }
-                    prev = vert
+//                    prev = vert
                 }
             }
         }
@@ -402,7 +465,7 @@ class StaticGraph(enterPoint: Method) {
         return if (minUdSet.isEmpty())
             null
         else {
-            minUdSet.iterator().next()
+            minUdSet.random()
         }
     }
 
