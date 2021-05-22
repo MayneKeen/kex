@@ -3,6 +3,7 @@ package org.jetbrains.research.kex
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.InternalSerializationApi
 import org.jetbrains.research.kex.asm.analysis.concolic.ConcolicChecker
+import org.jetbrains.research.kex.asm.analysis.concolic.Statistics
 import org.jetbrains.research.kex.asm.analysis.defect.DefectChecker
 import org.jetbrains.research.kex.asm.analysis.defect.DefectManager
 import org.jetbrains.research.kex.asm.analysis.testgen.DescriptorChecker
@@ -308,6 +309,7 @@ class Kex(args: Array<String>) {
                 "body coverage: ${String.format("%.2f", coverage.bodyCoverage)}%\n" +
                 "full coverage: ${String.format("%.2f", coverage.fullCoverage)}%")
         DescriptorStatistics.printStatistics()
+        Statistics.invoke().print()
     }
 
     private fun <T> createCoverageCounter(cm: ClassManager, tm: TraceManager<T>) = when {

@@ -21,7 +21,7 @@ import org.jetbrains.research.kex.state.StateBuilder
 import org.jetbrains.research.kex.state.predicate.PredicateType
 import org.jetbrains.research.kex.state.predicate.inverse
 //import org.jetbrains.research.kex.state.transformer.generateInputByModel
-import org.jetbrains.research.kex.statistics.Statistics
+//import org.jetbrains.research.kex.statistics.Statistics
 import org.jetbrains.research.kex.trace.TraceManager
 import org.jetbrains.research.kex.trace.`object`.*
 import org.jetbrains.research.kex.trace.runner.ObjectTracingRunner
@@ -248,46 +248,46 @@ class ConcolicChecker(
         }
     }
 
-    private suspend fun processTree(method: Method, statistics: Statistics) {
-        var contextLevel = 1
-        val contextCache = mutableSetOf<TraceGraph.Context>()
-        val visitedBranches = mutableSetOf<TraceGraph.Branch>()
+//    private suspend fun processTree(method: Method, statistics: Statistics) {
+//        var contextLevel = 1
+//        val contextCache = mutableSetOf<TraceGraph.Context>()
+//        val visitedBranches = mutableSetOf<TraceGraph.Branch>()
+//
+//        val startTrace: Trace = getRandomTrace(method)?.also { manager[method] = it } ?: return
+//        if (startTrace.actions.isEmpty()) return
+//        val traces = DominatorTraceGraph(startTrace)
+//
+//        while (!manager.isBodyCovered(method)) {
+//            statistics.iterations += 1
+//            var tb = traces.getTracesAndBranches().filter { it.second !in visitedBranches }
+//            while (tb.isEmpty()) {
+//                statistics.iterations += 1
+//                val randomTrace = getRandomTrace(method)?.also { manager[method] = it; } ?: return
+//                val randomBranch = TraceGraph.Branch(randomTrace.actions)
+//                tb = listOfNotNull(randomTrace to randomBranch).filter { it.second !in visitedBranches }
+//                yield()
+//            }
+//
+//            tb.asSequence()
+//                .filter { (_, branch) -> branch.context(contextLevel) !in contextCache }
+//                .forEach { (candidate, branch) ->
+//                    statistics.iterations += 1
+//                    run(method, candidate)?.also {
+//                        manager[method] = it
+//                        traces.addTrace(it)
+//                        statistics.satNum += 1
+//                    }
+//                    manager[method] = candidate
+//                    contextCache.add(branch.context(contextLevel))
+//                    visitedBranches.add(traces.toBranch(candidate))
+//                    yield()
+//                }
+//            contextLevel += 1
+//            yield()
+//        }
+//    }
 
-        val startTrace: Trace = getRandomTrace(method)?.also { manager[method] = it } ?: return
-        if (startTrace.actions.isEmpty()) return
-        val traces = DominatorTraceGraph(startTrace)
-
-        while (!manager.isBodyCovered(method)) {
-            statistics.iterations += 1
-            var tb = traces.getTracesAndBranches().filter { it.second !in visitedBranches }
-            while (tb.isEmpty()) {
-                statistics.iterations += 1
-                val randomTrace = getRandomTrace(method)?.also { manager[method] = it; } ?: return
-                val randomBranch = TraceGraph.Branch(randomTrace.actions)
-                tb = listOfNotNull(randomTrace to randomBranch).filter { it.second !in visitedBranches }
-                yield()
-            }
-
-            tb.asSequence()
-                .filter { (_, branch) -> branch.context(contextLevel) !in contextCache }
-                .forEach { (candidate, branch) ->
-                    statistics.iterations += 1
-                    run(method, candidate)?.also {
-                        manager[method] = it
-                        traces.addTrace(it)
-                        statistics.satNum += 1
-                    }
-                    manager[method] = candidate
-                    contextCache.add(branch.context(contextLevel))
-                    visitedBranches.add(traces.toBranch(candidate))
-                    yield()
-                }
-            contextLevel += 1
-            yield()
-        }
-    }
-
-
+    //should me record statistics here?
     private suspend fun getRandomTraceUntilSuccess(method: Method): Trace? {
         var trace: Trace? = null
         var iterations = 0
@@ -332,9 +332,10 @@ class ConcolicChecker(
             return
         }
         val graph = StaticGraph(method, target)
-        cfgds(graph)
-        yield()
+        val statistics = Statistics.invoke() // org.jetbrains.research.kex.asm.analysis.concolic.Statistics
+        cfgds(graph, statistics)
 
+        yield()
         return
     }
 
@@ -347,7 +348,7 @@ class ConcolicChecker(
     private fun getStateByInst(inst: Instruction) =
         PredicateStateAnalysis(cm).builder(inst.parent.parent).getInstructionState(inst)
 
-    private suspend fun execute(method: Method, trace: Trace, ps: PredicateState): Trace? {
+    private suspend fun execute(method: Method, trace: Trace, ps: PredicateState, statistics: Statistics): Trace? {
         val path = ps.path //mutated.path
         if (path in paths) {
             log.debug("Generated an already existing path")
@@ -358,6 +359,9 @@ class ConcolicChecker(
         val psa = PredicateStateAnalysis(cm)
         val checker = Checker(method, loader, psa)
         val result = checker.prepareAndCheck(ps)
+
+        statistics.incrementSolverRequests(method.name)
+
         if (result !is Result.SatResult) return null
         yield()
 
@@ -660,7 +664,7 @@ class ConcolicChecker(
     }
 
     private suspend fun searchAlongPath(
-        graph: StaticGraph, trace: Trace, path: MutableList<Vertex>,
+        graph: StaticGraph, trace: Trace, path: MutableList<Vertex>, statistics: Statistics
         ): Trace? {
         //fun Instruction.find() = graph.vertices.find {it.inst == this}
         var lastTrace = trace
@@ -686,7 +690,7 @@ class ConcolicChecker(
                 else null
             }
 
-            val tempTrace = execute(graph.rootMethod, lastTrace, ps)
+            val tempTrace = execute(graph.rootMethod, lastTrace, ps, statistics)
             yield()
             bound--
 
@@ -719,31 +723,39 @@ class ConcolicChecker(
     //test iterations, or if it uncovers no new branches after some
     //set number of iterations.
 
-    private suspend fun finish(graph: StaticGraph) {
+    private suspend fun finish(graph: StaticGraph, statistics: Statistics) {
         log.debug("Finishing the search")
 
-        val count = graph.vertices.size.toDouble()
-        var covered = 0.0
-
-        for (vertex in graph.vertices) {
-            if (vertex.isCovered)
-                covered += 1.0
-        }
-
-        var graphCoverage = (covered / count) * 100
-        log.debug("========================================================")
-        log.debug("Total static graph coverage for ${graph.rootMethod} is $graphCoverage %")
-        log.debug("========================================================")
+//        val count = graph.vertices.size.toDouble()
+//        var covered = 0.0
+//
+//        for (vertex in graph.vertices) {
+//            if (vertex.isCovered)
+//                covered += 1.0
+//        }
+//
+//        var graphCoverage = (covered / count) * 100
+//        log.debug("========================================================")
+//        log.debug("Total static graph coverage for ${graph.rootMethod} is $graphCoverage %")
+//        log.debug("========================================================")
+        statistics.print(graph.rootMethod.name)
         yield()
     }
 
-    suspend fun cfgds(graph: StaticGraph) {
+    private fun StaticGraph.isFullyCovered() = this.vertices.filterNot{ it.isCovered }.isEmpty()
+
+    private suspend fun cfgds(graph: StaticGraph, statistics: Statistics) { // org.jetbrains.research.kex.asm.analysis.concolic.Statistics
+        statistics.measureOverallTime(graph.rootMethod.name)
 
         var lastTrace = getRandomTraceUntilSuccess(graph.rootMethod)
         yield()
 
+        var fail = false
+
         if (lastTrace == null || lastTrace.actions.isEmpty()) {
             log.debug("CFGDS: Could not process any trace in method ${graph.rootMethod}")
+            statistics.stopTimeMeasurement(graph.rootMethod.name, fail)
+            finish(graph, statistics)
             return
         }
 
@@ -752,10 +764,19 @@ class ConcolicChecker(
         val failedToForce = mutableSetOf<Vertex>()
         var failedIterations = 0
 
+
         while (true) {
+            statistics.startIterationTimeMeasurement(graph.rootMethod.name)
+
+            if(graph.isFullyCovered()) {
+                log.debug("CFGDS: Method ${graph.rootMethod.name} is fully covered")
+                fail = false
+                break
+            }
 
             if (failedIterations > 20) {
                 log.debug("CFGDS: too many failed iterations in a row, exiting")
+                fail = true
                 break
             }
 
@@ -775,8 +796,11 @@ class ConcolicChecker(
 
             if (found == null) {
                 log.debug("CFGDS: Could not find a branch to force, exiting")
+                fail = true
                 break
             }
+
+            statistics.stopBranchSelectionMeasurement(graph.rootMethod.name)
 
             log.debug("found a branch")
             val branch = found.inst.parent
@@ -787,17 +811,18 @@ class ConcolicChecker(
             if (ps == null || ps.isEmpty) {
                 log.debug("CFGDS: Could not generate a PredicateState for block $branch")
                 failedIterations++
+                statistics.stopIterationTimeMeasurement(graph.rootMethod.name)
                 failedToForce.add(found)
                 continue
             }
 
-            val tempTrace = execute(graph.rootMethod, lastTrace!!, ps)
+            val tempTrace = execute(graph.rootMethod, lastTrace!!, ps, statistics)
             yield()
-
 
             if (tempTrace == null || tempTrace.actions.isNullOrEmpty()) {
                 log.debug("CFGDS: Could not process a trace for branch $branch")
                 failedIterations++
+                statistics.stopIterationTimeMeasurement(graph.rootMethod.name)
                 failedToForce.add(found)
                 continue
             }
@@ -813,6 +838,7 @@ class ConcolicChecker(
             }
             if (failedIterations > 20) {
                 log.debug("CFGDS: too many failed iterations in a row, exiting")
+                fail = true
                 break
             }
 
@@ -830,17 +856,18 @@ class ConcolicChecker(
             if (pathList.isEmpty()) {
                 log.debug("CFGDS: No path found for SAP, continuing")
                 found.tries += 1
+                statistics.stopIterationTimeMeasurement(graph.rootMethod.name)
                 continue
-            } else {
-                log.debug("CFGDS: A path for SAP has been found")
-
             }
+
+            log.debug("CFGDS: A path for SAP has been found")
+
             var sapSucceed = false
             for (path in pathList) {
-                val trace = searchAlongPath(graph, lastTrace!!, path)
+                val trace = searchAlongPath(graph, lastTrace!!, path, statistics)
                 yield()
                 if (trace == null || trace.actions.isNullOrEmpty()) {
-                    log.debug("CFGDS: SAP did not succeed on current iteration")
+                    log.debug("CFGDS: SAP did not succeed on its current iteration")
                     continue
                 }
                 sapSucceed = true
@@ -850,13 +877,18 @@ class ConcolicChecker(
 
             if (!sapSucceed) {
                 found.tries++
+                statistics.stopIterationTimeMeasurement(graph.rootMethod.name)
                 continue
             } else {
                 graph.addTrace(lastTrace!!)
                 graph.dropTries()
             }
-            log.debug("CFGDS: SearchAlongPath finished, trying to force a new branch in CFGDS")
+            statistics.stopIterationTimeMeasurement(graph.rootMethod.name)
+            log.debug("CFGDS: SearchAlongPath finished")
         }
-        finish(graph)
+
+        statistics.stopTimeMeasurement(graph.rootMethod.name, fail)
+        finish(graph, statistics)
     }
+
 }

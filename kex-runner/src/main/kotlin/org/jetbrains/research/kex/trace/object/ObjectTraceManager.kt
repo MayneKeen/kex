@@ -1,11 +1,18 @@
 package org.jetbrains.research.kex.trace.`object`
 
+import org.jetbrains.research.kex.asm.analysis.concolic.Statistics
+import org.jetbrains.research.kex.asm.manager.CoverageInfo
+import org.jetbrains.research.kex.asm.manager.isUnreachable
+import org.jetbrains.research.kex.asm.manager.originalBlock
 import org.jetbrains.research.kthelper.assert.unreachable
 import org.jetbrains.research.kthelper.collection.stackOf
 import org.jetbrains.research.kthelper.logging.log
 import org.jetbrains.research.kex.trace.TraceManager
 import org.jetbrains.research.kfg.ir.BasicBlock
 import org.jetbrains.research.kfg.ir.Method
+import org.jetbrains.research.kfg.ir.value.instruction.BranchInst
+import org.jetbrains.research.kfg.ir.value.instruction.SwitchInst
+import org.jetbrains.research.kfg.ir.value.instruction.TableSwitchInst
 
 class ObjectTraceManager : TraceManager<Trace> {
     private val methodInfos = mutableMapOf<Method, MutableSet<Trace>>()
@@ -42,11 +49,53 @@ class ObjectTraceManager : TraceManager<Trace> {
         assert(methodStack.size == traceStack.size) {
             log.error("Unexpected trace: number of method does not correspond to number of trace actions")
         }
+        val methods = mutableListOf<Method>()
         while (methodStack.isNotEmpty()) {
-            methodInfos.getOrPut(methodStack.pop(), ::mutableSetOf) += Trace(traceStack.pop())
+            val m = methodStack.pop()
+            methods.add(m)
+            methodInfos.getOrPut(m, ::mutableSetOf) += Trace(traceStack.pop())
         }
+
+//        for(m in methods)
+//            countCoverage(m, this)
+        countCoverage(method, this)
     }
 
     override fun isCovered(method: Method, bb: BasicBlock): Boolean =
-            methodInfos[method]?.any { it.isCovered(bb) } ?: false
+        methodInfos[method]?.any { it.isCovered(bb) } ?: false
+
+    private fun countCoverage(m: Method, tm: TraceManager<Trace>) {
+        val bodyBlocks = m.bodyBlocks.filterNot { it.isUnreachable }.map { it.originalBlock }.toSet()
+        val catchBlocks = m.catchBlocks.filterNot { it.isUnreachable }.map { it.originalBlock }.toSet()
+        val bodyCovered = bodyBlocks.count { this.isCovered(m, it) }
+        val catchCovered = catchBlocks.count { this.isCovered(m, it) }
+
+        val branches = mutableSetOf<BasicBlock>()
+        val catchBranches = mutableSetOf<BasicBlock>()
+
+        for(block in bodyBlocks)
+            if(block.terminator is BranchInst || block.terminator is SwitchInst || block.terminator is TableSwitchInst)
+                branches.addAll(block.successors)
+
+        for(block in catchBlocks)
+            if(block.terminator is BranchInst || block.terminator is SwitchInst || block.terminator is TableSwitchInst)
+                catchBranches.addAll(block.successors)
+
+        val branchCovered = branches.count { tm.isCovered(m, it) }
+        val catchBranchesCovered = catchBranches.count { tm.isCovered(m, it) }
+
+        val body = (bodyCovered * 100).toDouble() / bodyBlocks.size
+        val full = ((bodyCovered + catchCovered) * 100).toDouble() / (bodyBlocks.size + catchBlocks.size)
+
+        val branch = (branchCovered * 100).toDouble() / branches.size
+        val branchFull = ((branchCovered + catchBranchesCovered) * 100).toDouble() / (branches.size + catchBranches.size)
+
+        val statistics = Statistics.invoke()
+
+        statistics.addIterationBodyCoverage(m.name, body, full)
+        statistics.addIterationBranchCoverage(m.name, branch, branchFull)
+
+    }
+
 }
+
