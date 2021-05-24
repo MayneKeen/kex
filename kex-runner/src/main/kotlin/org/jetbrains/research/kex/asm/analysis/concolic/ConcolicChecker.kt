@@ -331,8 +331,10 @@ class ConcolicChecker(
             log.debug("Method $method is empty or has empty body")
             return
         }
-        val graph = StaticGraph(method, target)
         val statistics = Statistics.invoke() // org.jetbrains.research.kex.asm.analysis.concolic.Statistics
+        statistics.measureOverallTime(method)
+        val graph = StaticGraph(method, target)
+
         cfgds(graph, statistics)
 
         yield()
@@ -360,7 +362,7 @@ class ConcolicChecker(
         val checker = Checker(method, loader, psa)
         val result = checker.prepareAndCheck(ps)
 
-        statistics.incrementSolverRequests(method.name)
+        statistics.incrementSolverRequests(method)
 
         if (result !is Result.SatResult) return null
         yield()
@@ -738,15 +740,13 @@ class ConcolicChecker(
 //        log.debug("========================================================")
 //        log.debug("Total static graph coverage for ${graph.rootMethod} is $graphCoverage %")
 //        log.debug("========================================================")
-        statistics.print(graph.rootMethod.name)
+        statistics.print(graph.rootMethod)
         yield()
     }
 
     private fun StaticGraph.isFullyCovered() = this.vertices.filterNot{ it.isCovered }.isEmpty()
 
     private suspend fun cfgds(graph: StaticGraph, statistics: Statistics) { // org.jetbrains.research.kex.asm.analysis.concolic.Statistics
-        statistics.measureOverallTime(graph.rootMethod.name)
-
         var lastTrace = getRandomTraceUntilSuccess(graph.rootMethod)
         yield()
 
@@ -754,7 +754,7 @@ class ConcolicChecker(
 
         if (lastTrace == null || lastTrace.actions.isEmpty()) {
             log.debug("CFGDS: Could not process any trace in method ${graph.rootMethod}")
-            statistics.stopTimeMeasurement(graph.rootMethod.name, fail)
+            statistics.stopTimeMeasurement(graph.rootMethod, fail)
             finish(graph, statistics)
             return
         }
@@ -766,7 +766,7 @@ class ConcolicChecker(
 
 
         while (true) {
-            statistics.startIterationTimeMeasurement(graph.rootMethod.name)
+            statistics.startIterationTimeMeasurement(graph.rootMethod)
 
             if(graph.isFullyCovered()) {
                 log.debug("CFGDS: Method ${graph.rootMethod.name} is fully covered")
@@ -786,13 +786,15 @@ class ConcolicChecker(
             log.debug("CFGDS: Searching for a branch to force...")
             var found = graph.nextBranchToForce(failedToForce/*alreadyForced*/)
 
-            val uncoveredBranches = graph.vertices.filter {
-                (it.inst is BranchInst || it.inst is SwitchInst || it.inst is TableSwitchInst) && !it.isCovered
-            }
-
-            if (found == null && uncoveredBranches.isNotEmpty()) {
-                found = uncoveredBranches.random()
-            }
+//            val uncoveredBranches = graph.vertices.filter {
+//                it is TerminateVert
+//
+//                (it.inst is BranchInst || it.inst is SwitchInst || it.inst is TableSwitchInst) && !it.isCovered
+//            }
+//
+//            if (found == null && uncoveredBranches.isNotEmpty()) {
+//                found = uncoveredBranches.random()
+//            }
 
             if (found == null) {
                 log.debug("CFGDS: Could not find a branch to force, exiting")
@@ -800,7 +802,7 @@ class ConcolicChecker(
                 break
             }
 
-            statistics.stopBranchSelectionMeasurement(graph.rootMethod.name)
+            statistics.stopBranchSelectionMeasurement(graph.rootMethod)
 
             log.debug("found a branch")
             val branch = found.inst.parent
@@ -808,13 +810,15 @@ class ConcolicChecker(
             val ps = getState(branch)
             found.tries++
 
-            if (ps == null || ps.isEmpty) {
+            if (ps == null /*|| ps.isEmpty*/) {
                 log.debug("CFGDS: Could not generate a PredicateState for block $branch")
                 failedIterations++
-                statistics.stopIterationTimeMeasurement(graph.rootMethod.name)
+                statistics.stopIterationTimeMeasurement(graph.rootMethod)
                 failedToForce.add(found)
                 continue
             }
+
+            log.debug("CFGDS: PS assembled correctly")
 
             val tempTrace = execute(graph.rootMethod, lastTrace!!, ps, statistics)
             yield()
@@ -822,16 +826,24 @@ class ConcolicChecker(
             if (tempTrace == null || tempTrace.actions.isNullOrEmpty()) {
                 log.debug("CFGDS: Could not process a trace for branch $branch")
                 failedIterations++
-                statistics.stopIterationTimeMeasurement(graph.rootMethod.name)
+                statistics.stopIterationTimeMeasurement(graph.rootMethod)
                 failedToForce.add(found)
                 continue
             }
             lastTrace = tempTrace
             log.debug("CFGDS: Just generated a trace")
+
+            val set = traceToSetVertex(graph, lastTrace)
+
+            for(vertex in set) {
+                println("Vertex: ${vertex.toString()}, covered: ${vertex.isCovered}")
+            }
+
             val newBranchCovered = graph.addTrace(lastTrace)
 
             if (!newBranchCovered) {
                 failedIterations++
+                failedToForce.add(found)
                 log.debug("CFGDS: Processing a trace was successful, but no new branches are covered")
             } else {
                 failedIterations = 0
@@ -856,7 +868,7 @@ class ConcolicChecker(
             if (pathList.isEmpty()) {
                 log.debug("CFGDS: No path found for SAP, continuing")
                 found.tries += 1
-                statistics.stopIterationTimeMeasurement(graph.rootMethod.name)
+                statistics.stopIterationTimeMeasurement(graph.rootMethod)
                 continue
             }
 
@@ -877,17 +889,17 @@ class ConcolicChecker(
 
             if (!sapSucceed) {
                 found.tries++
-                statistics.stopIterationTimeMeasurement(graph.rootMethod.name)
+                statistics.stopIterationTimeMeasurement(graph.rootMethod)
                 continue
             } else {
                 graph.addTrace(lastTrace!!)
                 graph.dropTries()
             }
-            statistics.stopIterationTimeMeasurement(graph.rootMethod.name)
+            statistics.stopIterationTimeMeasurement(graph.rootMethod)
             log.debug("CFGDS: SearchAlongPath finished")
         }
 
-        statistics.stopTimeMeasurement(graph.rootMethod.name, fail)
+        statistics.stopTimeMeasurement(graph.rootMethod, fail)
         finish(graph, statistics)
     }
 

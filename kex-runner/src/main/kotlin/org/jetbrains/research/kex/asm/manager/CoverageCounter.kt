@@ -103,7 +103,7 @@ class CoverageCounter<T> private constructor(
         )
     }
 }
-
+/*
 data class BranchCoverageInfo(val branchCoverage: Double, val fullCoverage: Double)
 
 class BranchCoverageCounter<T> private constructor(
@@ -199,3 +199,4 @@ class BranchCoverageCounter<T> private constructor(
         )
     }
 }
+*/

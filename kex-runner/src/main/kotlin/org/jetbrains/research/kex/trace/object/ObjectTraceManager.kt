@@ -87,14 +87,19 @@ class ObjectTraceManager : TraceManager<Trace> {
         val body = (bodyCovered * 100).toDouble() / bodyBlocks.size
         val full = ((bodyCovered + catchCovered) * 100).toDouble() / (bodyBlocks.size + catchBlocks.size)
 
-        val branch = (branchCovered * 100).toDouble() / branches.size
-        val branchFull = ((branchCovered + catchBranchesCovered) * 100).toDouble() / (branches.size + catchBranches.size)
+        var branch = (branchCovered * 100).toDouble() / branches.size
+        var branchFull = ((branchCovered + catchBranchesCovered) * 100).toDouble() / (branches.size + catchBranches.size)
+
+        if(branches.size < 1) {
+            branch = 100.toDouble()
+            if(catchBranches.size < 1)
+                branchFull = 100.toDouble()
+        }
 
         val statistics = Statistics.invoke()
 
-        statistics.addIterationBodyCoverage(m.name, body, full)
-        statistics.addIterationBranchCoverage(m.name, branch, branchFull)
-
+        statistics.addIterationBodyCoverage(m, body, full)
+        statistics.addIterationBranchCoverage(m, branch, branchFull)
     }
 
 }

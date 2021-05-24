@@ -1,5 +1,6 @@
 package org.jetbrains.research.kex.asm.analysis.concolic
 
+import org.jetbrains.research.kfg.ir.Method
 import org.jetbrains.research.kthelper.logging.log
 import java.time.Duration
 import java.time.temporal.ChronoUnit
@@ -11,12 +12,12 @@ class Statistics private constructor() {
 
     var algorithm = ""
 
-    private fun Statistics.getMethodStats(/*algorithm: String,*/ methodName: String): MethodStats {
-        var ms = methodHolder.find { it.methodName == methodName /*&& it.algorithm == algorithm */}
+    private fun Statistics.getMethodStats(/*algorithm: String,*/ method: Method): MethodStats {
+        var ms = methodHolder.find { it.method == method /*&& it.algorithm == algorithm */}
         return if (ms != null)
             ms
         else {
-            ms = MethodStats(/*algorithm,*/ methodName)
+            ms = MethodStats(/*algorithm,*/ method)
             methodHolder += ms
             ms
         }
@@ -29,16 +30,16 @@ class Statistics private constructor() {
     /**
      * Starts measuring one iteration time + iterations number  **/
 
-    fun startIterationTimeMeasurement(methodName: String/*, algorithm: String*/) {
-        val ms = this.getMethodStats(methodName/*, algorithm*/)
+    fun startIterationTimeMeasurement(method: Method/*, algorithm: String*/) {
+        val ms = getMethodStats(method/*, algorithm*/)
         ms.iterationsStart += System.currentTimeMillis()
     }
 
     /**
      * Stops measuring one iteration time + iterations number  **/
 
-    fun stopIterationTimeMeasurement(methodName: String/*, algorithm: String*/) {
-        val ms = this.getMethodStats(methodName/*, algorithm*/)
+    fun stopIterationTimeMeasurement(method: Method/*, algorithm: String*/) {
+        val ms = getMethodStats(method/*, algorithm*/)
 
         try {
             val itStart = ms.iterationsStart[ms.itNumber-1]
@@ -46,7 +47,7 @@ class Statistics private constructor() {
         } catch (e: ArrayIndexOutOfBoundsException) {
             log.debug(
                 "Statistics: an $e occurred while measuring iteration #${ms.itNumber} time," +
-                        " in $methodName Duration.ZERO recorded"
+                        " in ${method.name} Duration.ZERO recorded"
             )
             ms.itDurations += Duration.ZERO
         }
@@ -57,8 +58,8 @@ class Statistics private constructor() {
     /**
      * Measuring branch selection time **/
 
-    fun stopBranchSelectionMeasurement(methodName: String/*, algorithm: String*/) {
-        val ms = this.getMethodStats(methodName/*, algorithm*/)
+    fun stopBranchSelectionMeasurement(method: Method/*, algorithm: String*/) {
+        val ms = getMethodStats(method/*, algorithm*/)
 
         try {
             val itStart = ms.iterationsStart[ms.itNumber-1]
@@ -67,7 +68,7 @@ class Statistics private constructor() {
         } catch (e: ArrayIndexOutOfBoundsException) {
             log.debug(
                 "Statistics: an $e occurred while measuring iteration #${ms.itNumber} time," +
-                        " in $methodName. Duration.ZERO recorded")
+                        " in ${method.name}. Duration.ZERO recorded")
             ms.branchSelectionDuration.add(Duration.ZERO)
         }
         return
@@ -75,45 +76,41 @@ class Statistics private constructor() {
 
     /**
      * Starts measuring elapsed time  **/
-    fun measureOverallTime(methodName: String/*, algorithm: String*/) {
-        this.getMethodStats(methodName/*, algorithm*/).startTime = System.currentTimeMillis()
+    fun measureOverallTime(method: Method/*, algorithm: String*/) {
+        getMethodStats(method/*, algorithm*/).startTime = System.currentTimeMillis()
     }
 
     /**
      * If fail==false: Stops measurement of elapsed time.
      * Else: Stops all measurements**/
 
-    fun stopTimeMeasurement(methodName: String, fail: Boolean/*, algorithm: String*/) {
+    fun stopTimeMeasurement(method: Method, fail: Boolean/*, algorithm: String*/) {
         if(fail) {
-            stopBranchSelectionMeasurement(methodName)
-            stopIterationTimeMeasurement(methodName)
+            stopBranchSelectionMeasurement(method)
+            stopIterationTimeMeasurement(method)
         }
-        val ms = getMethodStats(methodName/*, algorithm*/)
+        val ms = getMethodStats(method/*, algorithm*/)
         ms.elapsedTime = Duration.of(System.currentTimeMillis() - ms.startTime, ChronoUnit.MILLIS)
     }
 
     /**
      * Incrementing number of solver requests  **/
 
-    fun incrementSolverRequests(methodName: String/*, algorithm: String*/) {
-        getMethodStats(methodName/*, algorithm*/).solverCalls++
+    fun incrementSolverRequests(method: Method/*, algorithm: String*/) {
+        getMethodStats(method/*, algorithm*/).solverCalls++
     }
 
     /**
      * Setting total coverage + total branch coverage  **/
 
-    fun updateMethodCoverage(methodName: String) {
-        val ms = getMethodStats(methodName/*, algorithm*/)
+    fun updateMethodCoverage(method: Method) {
+        val ms = getMethodStats(method/*, algorithm*/)
         if(ms.isEmpty())
             return
         ms.bodyFull = ms.fullBodyCoverage.last()
         ms.branchFull = ms.fullBranchCoverage.last()
     }
 
-//    fun setTotalCoverageValues(ms: MethodStats/*, algorithm: String*/, bodyFull: Double, branchFull: Double) {
-//        ms.bodyFull = bodyFull
-//        ms.branchFull = branchFull
-//    }
 
     /**
      * Measuring average project coverage  **/
@@ -130,30 +127,28 @@ class Statistics private constructor() {
     }
 
 
-
-
     /**
      * Collecting dynamic body/full coverage stats **/
 
-    fun addIterationBodyCoverage(methodName: String/*, algorithm: String*/, body: Double, full: Double) {
-        val ms = getMethodStats(methodName/*, algorithm*/)
+    fun addIterationBodyCoverage(method: Method/*, algorithm: String*/, body: Double, full: Double) {
+        val ms = getMethodStats(method/*, algorithm*/)
         ms.bodyCoverage.add(body)
         ms.fullBodyCoverage.add(full)
         if(ms.isEmpty() || ms.branchCoverage.isEmpty() || ms.fullBranchCoverage.isEmpty())
             return
-        updateMethodCoverage(methodName)
+        updateMethodCoverage(method)
     }
 
     /**
      * Collecting dynamic branch/branchFull coverage stats **/
 
-    fun addIterationBranchCoverage(methodName: String/*, algorithm: String*/, branch: Double, branchFull: Double) {
-        val ms = getMethodStats(methodName/*, algorithm*/)
+    fun addIterationBranchCoverage(method: Method/*, algorithm: String*/, branch: Double, branchFull: Double) {
+        val ms = getMethodStats(method/*, algorithm*/)
         ms.branchCoverage.add(branch)
         ms.fullBranchCoverage.add(branchFull)
         if(ms.isEmpty() || ms.branchCoverage.isEmpty() || ms.fullBranchCoverage.isEmpty())
             return
-        updateMethodCoverage(methodName)
+        updateMethodCoverage(method)
     }
 
     /**
@@ -174,36 +169,28 @@ class Statistics private constructor() {
             calls += it.solverCalls
             branchSelection += it.avgBranchSelectionTime()
         }
-
-        bodyCoverage /= methodHolder.size
-        branchCoverage /= methodHolder.size
-        branchSelection /= methodHolder.size
-
-
         val sb = StringBuilder()
         sb.append("Overall statistics: \n")
+        sb.append("     number of methods: ${methodHolder.size}\n")
         sb.append("     number of iterations: ${iterations}\n")
-        sb.append("     elapsed time: ${elapsedTime}\n")
-        sb.append("     full body coverage: ${bodyCoverage/methodHolder.size}\n")
-        sb.append("     full branch coverage: ${branchCoverage/methodHolder.size}\n")
+        sb.append("     elapsed time: ${elapsedTime} ms\n")
+        sb.append("     avg body coverage: ${bodyCoverage/methodHolder.size}\n")
+        sb.append("     avg branch coverage: ${branchCoverage/methodHolder.size}\n")
         sb.append("     total solver calls: ${calls}\n")
-        sb.append("     average branch selection time millis: ${branchSelection/methodHolder.size}\n")
+        sb.append("     avg branch selection time: ${branchSelection/methodHolder.size} ms\n")
         println(sb.toString())
-
-
     }
-
 
     /**
      * Printing Statistics**/
-    fun print(methodName: String) {
-        val ms = getMethodStats(methodName)
+    fun print(method: Method) {
+        val ms = getMethodStats(method)
         if(ms.isEmpty()){
-            println("Statistics: no results for method $methodName")
+            println("Statistics: no results for method ${method.name}")
             return
         }
         val sb = StringBuilder()
-        sb.append("Method $methodName statistics: \n")
+        sb.append("Method ${method.name} statistics: \n")
         sb.append("     number of iterations: ${ms.itNumber}\n")
         sb.append("     elapsed time: ${ms.elapsedTime.toMillis()}\n")
         sb.append("     full body coverage: ${ms.bodyFull}\n")
@@ -228,7 +215,6 @@ class Statistics private constructor() {
         operator fun invoke(): Statistics = synchronized(this) {
             if (instance == null)
                 instance = Statistics()
-//            instance?.setAlg()
             instance!!
         }
 
@@ -241,7 +227,7 @@ class Statistics private constructor() {
 }
 
 data class MethodStats(//val algorithm: String,
-                       val methodName: String
+                       val method: Method
                        ) {
     //number of current iteration
     //after execution here we should have total amount of iterations
@@ -258,10 +244,7 @@ data class MethodStats(//val algorithm: String,
     //method analysis end time
     var elapsedTime = Duration.ZERO!!
 
-    //total method coverage
-//    var totalCoverage = 0.0
-//    var totalBranchCoverage = 0.0
-
+    //avg method coverage
     var bodyFull = 0.0
     var branchFull = 0.0
 
@@ -280,14 +263,14 @@ data class MethodStats(//val algorithm: String,
 
     fun isNotEmpty() = !this.isEmpty()
 
-    override fun hashCode() = super.hashCode() /*+ algorithm.hashCode()*/ + methodName.hashCode() + startTime.hashCode()
+    override fun hashCode() = super.hashCode() /*+ algorithm.hashCode()*/ + method.hashCode() + startTime.hashCode()
 
     override fun toString(): String {
         return super.toString()
     }
     override fun equals(other: Any?) =
         if(other is MethodStats)
-            /*this.algorithm == other.algorithm &&*/ this.methodName == other.methodName && super.equals(other)
+            /*this.algorithm == other.algorithm &&*/ this.method == other.method && super.equals(other)
 //                    &&
 //                    this.itNumber == other.itNumber && this.itDurations == other.itDurations &&
 //                    this.startTime == other.startTime && this.elapsedTime == other.elapsedTime &&

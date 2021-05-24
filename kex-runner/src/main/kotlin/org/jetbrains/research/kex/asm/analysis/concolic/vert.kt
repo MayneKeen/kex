@@ -29,7 +29,9 @@ sealed class Vertex(
     }
 
     override fun toString(): String {
-        return inst.toString()
+        return if(this.inst is BranchInst || this.inst is SwitchInst || this.inst is TableSwitchInst)
+            "(Branch)" + super.toString()
+        else super.toString()
     }
 }
 
@@ -47,6 +49,10 @@ data class Vert(
     override fun hashCode(): Int {
         return super.hashCode()
     }
+
+    override fun toString(): String {
+        return "Vert at " + super.toString()
+    }
 }
 
 data class CallVert(
@@ -63,8 +69,12 @@ data class CallVert(
     override fun hashCode(): Int {
         return super.hashCode()
     }
-}
 
+    override fun toString(): String {
+        return "CallVert at " + super.toString()
+    }
+
+}
 
 data class TerminateVert(
     override val inst: TerminateInst,
@@ -80,6 +90,11 @@ data class TerminateVert(
     override fun hashCode(): Int {
         return super.hashCode()
     }
+
+    override fun toString(): String {
+        return "TerminateVert at " + super.toString()
+    }
+
 }
 
 

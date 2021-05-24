@@ -80,9 +80,8 @@ class StaticGraph(enterPoint: Method, target: Package) {
 
         when (vert) {
             is TerminateVert -> {
-                val isBranch = (vert.inst is BranchInst || vert.inst is SwitchInst || vert.inst is TableSwitchInst)
                 for (pred in vert.predecessors) {
-                    if (isBranch)
+                    if (vert.inst.isBranch())
                         addWeight(pred, vert, 1)
                     else
                         addWeight(pred, vert, 0)
@@ -233,11 +232,9 @@ class StaticGraph(enterPoint: Method, target: Package) {
                         val temp = currentBlock.instructions.filterIsInstance<CallInst>()
                         val vert = temp.find { it.method == action.method }?.find()
 
-//                        if(vert != null && prev != null && prev is TerminateVert &&
-//                            (prev.inst is BranchInst || prev.inst is SwitchInst || prev.inst is TableSwitchInst) && !vert.isCovered)
+
                         if (vert != null && prevBlock != null && prevBlock.isNotEmpty &&
-                            (prevBlock.terminator is BranchInst || prevBlock.terminator is SwitchInst ||
-                                    prevBlock.terminator is TableSwitchInst) && !vert.isCovered) {
+                            prevBlock.terminator.isBranch() && !vert.isCovered) {
                             newBranchCovered = true
                         }
                         vert?.isCovered = true
@@ -257,12 +254,8 @@ class StaticGraph(enterPoint: Method, target: Package) {
                         continue
                     val vert = currentBlock.instructions.first().find()
 
-//                    if(vert != null && prev != null && prev is TerminateVert &&
-//                        (prev.inst is BranchInst || prev.inst is SwitchInst || prev.inst is TableSwitchInst)
-//                        && !vert.isCovered) {
                     if (vert != null && prevBlock != null && prevBlock.isNotEmpty &&
-                        (prevBlock.terminator is BranchInst || prevBlock.terminator is SwitchInst ||
-                                prevBlock.terminator is TableSwitchInst) && !vert.isCovered) {
+                        prevBlock.terminator.isBranch() && !vert.isCovered) {
                         newBranchCovered = true
                     }
                     vert?.isCovered = true
@@ -276,12 +269,9 @@ class StaticGraph(enterPoint: Method, target: Package) {
                         inst.find()?.isCovered = true
                     }
                     val vert = currentBlock.terminator.find()
-//                    if(vert != null && prev != null && prev is TerminateVert &&
-//                        (prev.inst is BranchInst || prev.inst is SwitchInst || prev.inst is TableSwitchInst)
-//                        && !vert.isCovered) {
+
                     if(vert != null && prevBlock != null && prevBlock.isNotEmpty &&
-                        (prevBlock.terminator is BranchInst || prevBlock.terminator is SwitchInst ||
-                                prevBlock.terminator is TableSwitchInst) && !vert.isCovered) {
+                        prevBlock.terminator.isBranch() && !vert.isCovered) {
                         newBranchCovered = true
                     }
                     vert?.isCovered = true
@@ -297,8 +287,7 @@ class StaticGraph(enterPoint: Method, target: Package) {
                     }
 
                     if(prevBlock != null && prevBlock.isNotEmpty &&
-                        (prevBlock.terminator is BranchInst || prevBlock.terminator is SwitchInst ||
-                                prevBlock.terminator is TableSwitchInst) && !vert.isCovered) {
+                        prevBlock.terminator.isBranch() && !vert.isCovered) {
                         newBranchCovered = true
                     }
 
@@ -317,8 +306,7 @@ class StaticGraph(enterPoint: Method, target: Package) {
                     }
 
                     if(prevBlock != null && prevBlock.isNotEmpty &&
-                        (prevBlock.terminator is BranchInst || prevBlock.terminator is SwitchInst ||
-                                prevBlock.terminator is TableSwitchInst) && !vert.isCovered) {
+                        prevBlock.terminator.isBranch() && !vert.isCovered) {
                         newBranchCovered = true
                     }
 
@@ -344,25 +332,41 @@ class StaticGraph(enterPoint: Method, target: Package) {
     private fun findUncovered(): MutableSet<Vertex> = vertices.filter { !it.isCovered }.toMutableSet()
 
     private fun recomputeUncoveredDistance() {
-        val uncovered: MutableSet<Vertex> = findUncovered()
+        val uncovered = findUncovered().filter { it.isBranch() }.toMutableSet()
+
+        if(uncovered.isEmpty()) {
+            log.debug("Graph: No uncovered branches to recompute uncovered distance to")
+            return
+        }
 
         vertices.forEach { it.uncoveredDistance = Int.MAX_VALUE / 2 }
 
         for (vertex in uncovered) {
             if (vertex == this.root)
                 continue
+
+            //4 each vertex we generate a map with shortest paths to all that lies above it
             val map = dijkstra(vertex)
             val uncoveredKeys = map.keys.filter { uncovered.contains(it) }.toMutableSet()
             uncoveredKeys.forEach { map.keys.remove(it) }
 
             map.keys.forEach {
-                if (it.uncoveredDistance >= map[it]!!) {
+                if (it.uncoveredDistance >= map[it]!! && it.isBranch()) { //changed
                     it.uncoveredDistance = map[it]!!
                     it.nearestUncovered = vertex
                 }
             }
         }
         return
+    }
+
+    private fun Instruction.isBranch(): Boolean = this is BranchInst || this is SwitchInst || this is TableSwitchInst
+
+    private fun Vertex.isBranch(): Boolean {
+//        if(this.inst.isBranch())
+//            return true
+        this.predecessors.forEach { if(it.inst.isBranch()) return true }
+        return false
     }
 
     private fun generateDijkstraSearchSet(v: Vertex): MutableSet<Vertex> {
@@ -420,48 +424,37 @@ class StaticGraph(enterPoint: Method, target: Package) {
         return set
     }
 
-    private fun findWithMinUD(failed: MutableSet<Vertex>/*, forced: MutableSet<Vertex>*/): MutableSet<Vertex> {
-        log.debug("Graph: entering findWithMinUd")
+    private fun findWithMinUD(failed: MutableSet<Vertex>): MutableSet<Vertex> {
         var result = mutableSetOf<Vertex>()
         var ud = Int.MAX_VALUE
 
-        val covered = vertices.filter { it.isCovered && !failed.contains(it) /*&& forced.contains(it)*/ }
+        val covered = vertices.filter { it.isCovered && !failed.contains(it) }
             .filterIsInstance<TerminateVert>().toMutableSet()
 
         //4 debug only {
-        val instances = covered.filter { it.inst is BranchInst || it.inst is SwitchInst || it.inst is TableSwitchInst }
-        val total = vertices.filterIsInstance<TerminateVert>()
-            .filter { it.inst is BranchInst || it.inst is SwitchInst || it.inst is TableSwitchInst }
-        log.debug("Graph: findWithMinUd covered terminators quantity = (" + covered.size + ")")
+        val instances = covered.filter { it.isBranch() }
+        val total = vertices.filter { it.isBranch()}
+
         log.debug("Graph: Total branches quantity = (" + total.size + ")")
         log.debug("Graph: findWithMinUd covered branches quantity = (" + instances.size + ")")
         //{
 
         for (vertex in covered) {
-            result = when (vertex.inst) {
-                is BranchInst -> {
-                    checkUD(result, vertex, ud)
-                }
-                is SwitchInst -> {
-                    checkUD(result, vertex, ud)
-                }
-                is TableSwitchInst -> {
-                    checkUD(result, vertex, ud)
-                }
-                else -> {
-                    result
-                    continue
-                }
+            if(failed.contains(vertex))
+                continue
+            result = if(vertex.isBranch())
+                checkUD(result, vertex, ud)
+            else
+                result
 
-            }
             if (result.isNotEmpty())
                 ud = result.first().uncoveredDistance
         }
         return result
     }
 
-    fun nextBranchToForce(failed: MutableSet<Vertex>/*, forced: MutableSet<Vertex>*/): Vertex? {
-        val minUdSet = findWithMinUD(failed/*, forced*/)
+    fun nextBranchToForce(failed: MutableSet<Vertex>): Vertex? {
+        val minUdSet = findWithMinUD(failed)
         return if (minUdSet.isEmpty())
             null
         else {
@@ -478,9 +471,13 @@ class StaticGraph(enterPoint: Method, target: Package) {
         val iterator = paths.iterator()
         while (iterator.hasNext()) {
             val path = iterator.next()
-            val uncoveredSet = path.filter { !it.isCovered }.toMutableSet()
-            if (uncoveredSet.isNullOrEmpty()) {
+            val uncovered = path.filter { !it.isCovered }
+            if (uncovered.isEmpty())
                 iterator.remove()
+            else {
+                val count = uncovered.count { it.isBranch() }
+                if (count < 1)
+                    iterator.remove()
             }
         }
         return if (paths.isEmpty())
@@ -505,7 +502,6 @@ class StaticGraph(enterPoint: Method, target: Package) {
 
         for (successor in curr.successors) {
             val dist = ud - curr.weights[successor]!!
-            print("dist is $dist")
             print("${path.size}")
             if (dist < 0) {
                 return updatedPaths
