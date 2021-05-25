@@ -23,14 +23,13 @@ sealed class Vertex(
 
     override fun equals(other: Any?): Boolean {
         return if (other is Vertex)
-        //this.bb == other.bb && this.inst == other.inst
             this.inst.parent == other.inst.parent && this.inst == other.inst
         else false
     }
 
     override fun toString(): String {
         return if(this.inst is BranchInst || this.inst is SwitchInst || this.inst is TableSwitchInst)
-            "(Branch)" + super.toString()
+            "(Branch) " + super.toString()
         else super.toString()
     }
 }

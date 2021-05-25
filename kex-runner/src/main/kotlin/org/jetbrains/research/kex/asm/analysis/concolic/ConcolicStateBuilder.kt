@@ -169,13 +169,16 @@ class ConcolicStateBuilder(val cm: ClassManager, val psa: PredicateStateAnalysis
         }
     }
 
-    fun forceByType(prevVert: TerminateVert, currentBlock: BasicBlock, path: MutableList<Vertex>) {
+    fun forceByType(prevVert: TerminateVert, path: MutableList<Vertex>) {
+        //fun Vertex.next() = path[path.indexOf(this) +1]
         val index = path.indexOf(prevVert) + 1
         if (path.size < index) {
             log.debug("Could not force cos path.size is too low")
             return
         }
-        val next = path[index].inst.parent
+
+        val nextVert = path[index]
+        val next = nextVert.inst.parent
 
         when (val prevInst = prevVert.inst) {
             is BranchInst -> {
