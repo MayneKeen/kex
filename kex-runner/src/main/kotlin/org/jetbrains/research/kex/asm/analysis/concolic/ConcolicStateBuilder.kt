@@ -171,6 +171,7 @@ class ConcolicStateBuilder(val cm: ClassManager, val psa: PredicateStateAnalysis
 
     fun forceByType(prevVert: TerminateVert, path: MutableList<Vertex>) {
         //fun Vertex.next() = path[path.indexOf(this) +1]
+
         val index = path.indexOf(prevVert) + 1
         if (path.size < index) {
             log.debug("Could not force cos path.size is too low")
@@ -200,6 +201,13 @@ class ConcolicStateBuilder(val cm: ClassManager, val psa: PredicateStateAnalysis
                 return
             }
         }
+    }
+
+    private fun StateBuilder.drop() {
+        this.current = this.current.dropLast(1)
+    }
+    fun dropLast() {
+        this.stateBuilder.drop()
     }
 
     fun buildPhiInst(inst: PhiInst, entry: BasicBlock) {

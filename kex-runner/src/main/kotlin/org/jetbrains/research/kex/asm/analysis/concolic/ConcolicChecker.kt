@@ -371,7 +371,7 @@ class ConcolicChecker(
             generator.generate("test${++counter}", method, checker.state, result.model)
             //generateInputByModel(ctx, method, checker.state, result.model)
         } ?: return null
-        //yield()
+        yield()
 
         val resultingTrace = tryOrNull { collectTrace(method, instance, args) } ?: return null
         if (buildState(method, resultingTrace).path.startsWith(path))
@@ -585,6 +585,7 @@ class ConcolicChecker(
 
                     if(prevVert.isBranch() && !list.contains(path[path.indexOf(prevVert)+1])) {
                         completelyMatched = false
+                        builder.dropLast()
                         builder.forceByType(prevVert as TerminateVert, path)
                         break
                     }
@@ -722,8 +723,14 @@ class ConcolicChecker(
         var bound = path.count { it.inst is BranchInst || it.inst is SwitchInst || it.inst is TableSwitchInst }
 
         while (bound > 0) {
-            val ps = findMismatch(graph.rootMethod, graph, trace, path)
+            if (failedIterations > 20) {
+                log.debug("SAP: did not succeed, too many failed iterations in a row")
+                return if (lastTrace != trace)
+                    lastTrace
+                else null
+            }
 
+            val ps = findMismatch(graph.rootMethod, graph, trace, path)
             if (ps == null && lastTrace != trace) {
                 log.debug("SAP: succeed")
                 return lastTrace
@@ -737,14 +744,16 @@ class ConcolicChecker(
             }
 
             val tempTrace = execute(graph.rootMethod, lastTrace, ps, statistics)
-            //yield()
+            yield()
             bound--
-            val a = tempTrace == lastTrace
-            if(a)
-                println("SAP: New trace has no differences from the previous one")
 
+            if(tempTrace == lastTrace) {
+                log.warn("SAP: New trace has no differences from the previous one")
+                failedIterations++
+                continue
+            }
             if (tempTrace == null || tempTrace.actions.isNullOrEmpty()) {
-                log.debug("SAP: could not process a trace...")
+                log.warn("SAP: could not process a trace")
                 return if (lastTrace != trace)
                     lastTrace
                 else null
@@ -757,12 +766,7 @@ class ConcolicChecker(
                 log.debug("SAP: a failed iteration")
                 failedIterations++
             }
-            if (failedIterations > 20) {
-                log.debug("SAP: did not succeed, too many failed iterations in a row")
-                return lastTrace
-            }
 
-            log.debug("SAP: an iteration of sap finished correctly")
         }
         return lastTrace
     }
@@ -902,7 +906,7 @@ class ConcolicChecker(
             var sapSucceed = false
             for (path in pathList) {
                 val trace = searchAlongPath(graph, lastTrace!!, path, statistics)
-                //yield()
+                yield()
                 if (trace == null || trace.actions.isNullOrEmpty()) {
                     log.debug("CFGDS: SAP did not succeed on current path")
                     failedPaths.add(path)

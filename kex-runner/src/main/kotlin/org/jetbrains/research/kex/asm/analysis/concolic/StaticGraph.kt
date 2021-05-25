@@ -322,6 +322,10 @@ class StaticGraph(enterPoint: Method, target: Package) {
 
         log.debug("Graph: trace added successfully, recomputing UD")
         recomputeUncoveredDistance()
+        val branches = vertices.filter { it.inst.isBranch() }
+        if(branches.size > 0)
+            log.debug("here we r")
+
         return newBranchCovered
     }
 
