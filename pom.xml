@@ -30,6 +30,8 @@
 
         <kt-helper.version>0.0.8</kt-helper.version>
         <kfg.version>0.0.11-7</kfg.version>
+
+        <klaxon.version>5.5</klaxon.version>
     </properties>
 
     <repositories>
@@ -49,7 +51,7 @@
 
         <repository>
             <id>github-vorpal-research-kotlin-maven</id>
-            <url>https://maven.pkg.github.com/vorpal-research/kotlin-maven</url>
+            <url>https://maven.vorpal-research.science</url>
         </repository>
     </repositories>
 
