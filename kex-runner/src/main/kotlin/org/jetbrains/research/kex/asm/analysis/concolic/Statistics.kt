@@ -1,5 +1,6 @@
 package org.jetbrains.research.kex.asm.analysis.concolic
 
+import org.apache.commons.lang.text.StrBuilder
 import org.jetbrains.research.kfg.ir.Method
 import org.jetbrains.research.kthelper.logging.log
 import java.time.Duration
@@ -42,7 +43,7 @@ class Statistics private constructor() {
         val ms = getMethodStats(method/*, algorithm*/)
 
         try {
-            val itStart = ms.iterationsStart[ms.itNumber-1]
+            val itStart = ms.iterationsStart[ms.itNumber]
             ms.itDurations += Duration.of(System.currentTimeMillis() - itStart, ChronoUnit.MILLIS)
         } catch (e: ArrayIndexOutOfBoundsException) {
             log.debug(
@@ -62,7 +63,7 @@ class Statistics private constructor() {
         val ms = getMethodStats(method/*, algorithm*/)
 
         try {
-            val itStart = ms.iterationsStart[ms.itNumber-1]
+            val itStart = ms.iterationsStart[ms.itNumber]
             ms.branchSelectionDuration.add(Duration.of(
                 System.currentTimeMillis() - itStart, ChronoUnit.MILLIS))
         } catch (e: ArrayIndexOutOfBoundsException) {
@@ -151,6 +152,39 @@ class Statistics private constructor() {
         updateMethodCoverage(method)
     }
 
+    private fun MethodStats.avgBranchSelectionTime(): Long {
+        if(this.branchSelectionDuration.isEmpty())
+            return 0.0.toLong()
+        var sum = 0.0.toLong()
+        this.branchSelectionDuration.forEach{ sum += it.toMillis() }
+        return sum / this.branchSelectionDuration.size
+    }
+
+    fun setOtherMethodCoverage(method: Method, other: Method, body: Double, bodyFull:Double,
+                                            branch: Double, branchFull: Double) {
+        if(method == other) {
+            log.error("Statistics: setting other method coverage for methods method: ${method.name} " +
+                    "failed because other method is the same")
+            return
+        }
+
+        val ms = getMethodStats(method)
+        var otm = ms.otherMethodsInfo[other]
+        val notSet = otm==null
+        if(notSet)
+            otm = OtherMethodInfo(method, other)
+
+        otm!!.bodyCoverage.add(body)
+        otm.fullBodyCoverage.add(bodyFull)
+        otm.branchCoverage.add(branch)
+        otm.fullBranchCoverage.add(branchFull)
+        otm.itNumber++
+
+        if(notSet)
+            ms.otherMethodsInfo[other] = otm
+        return
+    }
+
     /**
      * Printing Statistics**/
     fun print(){
@@ -182,13 +216,18 @@ class Statistics private constructor() {
     }
 
     /**
-     * Printing Statistics**/
+     * Printing Statistics by method**/
     fun print(method: Method) {
         val ms = getMethodStats(method)
         if(ms.isEmpty()){
             println("Statistics: no results for method ${method.name}")
             return
         }
+
+        val listMethods = mutableListOf<String>()
+        for(m in ms.otherMethodsInfo.keys)
+            listMethods.add(m.name + " coverage is: ${ms.otherMethodsInfo[m].toString()} \n")
+
         val sb = StringBuilder()
         sb.append("Method ${method.name} statistics: \n")
         sb.append("     number of iterations: ${ms.itNumber}\n")
@@ -197,17 +236,9 @@ class Statistics private constructor() {
         sb.append("     full branch coverage: ${ms.branchFull}\n")
         sb.append("     total solver calls: ${ms.solverCalls}\n")
         sb.append("     average branch selection time millis: ${ms.avgBranchSelectionTime()}\n")
+        sb.append("     following methods were called: ${listMethods.toString()}")
         println(sb.toString())
-
-    }
-
-
-    fun MethodStats.avgBranchSelectionTime(): Long {
-        if(this.branchSelectionDuration.isEmpty())
-            return 0.0.toLong()
-        var sum = 0.0.toLong()
-        this.branchSelectionDuration.forEach{ sum += it.toMillis() }
-        return sum / this.branchSelectionDuration.size
+        return
     }
 
     companion object {
@@ -226,12 +257,45 @@ class Statistics private constructor() {
 
 }
 
+data class OtherMethodInfo(val method: Method,
+                            val other: Method
+                            ) {
+    var itNumber = 0
+
+    val bodyCoverage = mutableListOf<Double>()
+    val branchCoverage = mutableListOf<Double>()
+
+    val fullBodyCoverage = mutableListOf<Double>()
+    val fullBranchCoverage = mutableListOf<Double>()
+
+    override fun equals(other: Any?): Boolean {
+        return if (other is OtherMethodInfo)
+            this.method == other.method && this.other == other.other && this.itNumber == other.itNumber &&
+                    this.bodyCoverage == other.bodyCoverage && this.branchCoverage == other.branchCoverage &&
+                    this.fullBodyCoverage == other.fullBodyCoverage && this.fullBranchCoverage == other.fullBranchCoverage
+        else false
+    }
+
+    override fun hashCode(): Int {
+        return super.hashCode() + method.hashCode() + other.hashCode()
+    }
+
+    override fun toString(): String {
+        val sb = StringBuilder()
+        if(fullBodyCoverage.isNotEmpty())
+            sb.append("\n       body " + fullBodyCoverage.last() + "\n")
+        if(fullBranchCoverage.isNotEmpty())
+            sb.append("       branch: " + fullBranchCoverage.last() + "\n")
+        return sb.toString()
+    }
+}
+
 data class MethodStats(//val algorithm: String,
                        val method: Method
                        ) {
     //number of current iteration
     //after execution here we should have total amount of iterations
-    var itNumber = 1
+    var itNumber = 0
 
     //start in milliseconds for each iteration while testing the method
     val iterationsStart = mutableListOf<Long>()
@@ -257,9 +321,13 @@ data class MethodStats(//val algorithm: String,
     val fullBodyCoverage = mutableListOf<Double>()
     val fullBranchCoverage = mutableListOf<Double>()
 
+    //otherMethod :: info
+    val otherMethodsInfo = mutableMapOf<Method, OtherMethodInfo>()
 
-    fun isEmpty() = itNumber == 1 && bodyCoverage.isEmpty() && branchCoverage.isEmpty() &&
-            fullBodyCoverage.isEmpty() && fullBranchCoverage.isEmpty()
+
+
+    fun isEmpty() = itNumber == 0 && bodyCoverage.isEmpty() && branchCoverage.isEmpty() &&
+            fullBodyCoverage.isEmpty() && fullBranchCoverage.isEmpty() && solverCalls == 0 && otherMethodsInfo.isEmpty()
 
     fun isNotEmpty() = !this.isEmpty()
 

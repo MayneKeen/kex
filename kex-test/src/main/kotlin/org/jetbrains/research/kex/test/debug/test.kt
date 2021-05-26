@@ -3,6 +3,7 @@
 package org.jetbrains.research.kex.test.debug
 
 import org.jetbrains.research.kex.Intrinsics.kexAssert
+import java.awt.SecondaryLoop
 
 class BasicTests {
     companion object {
@@ -15,7 +16,26 @@ class BasicTests {
         }
     }
 
-    class Point(val x: Int, val y: Int)
+    class Point(val x: Int, val y: Int) {
+        fun isRightFrom(other: Point): Int {
+            if(other.x > this.x)
+                return 1
+            else
+                if(other.x < this.x)
+                    return -1
+                else
+                    if(other.x == this.x)
+                        return 0
+            return 0
+        }
+    }
+
+    fun aaa(first: Point, second: Point) {
+        if(first.isRightFrom(second) == 1)
+            println("aaaaaaaaa")
+        else
+            println("bbbbbbbbbbb")
+    }
 
 //    fun test(a: ArrayList<Point>) {
 //        if (a.size == 2) {
@@ -38,4 +58,6 @@ class BasicTests {
             kexAssert(test != null)
         }
     }
+
+
 }

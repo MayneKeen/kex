@@ -24,11 +24,14 @@ class ObjectTraceManager : TraceManager<Trace> {
         fullTraces += trace
         val traceStack = stackOf<MutableList<Action>>()
         val methodStack = stackOf<Method>()
+        val methods = mutableListOf<Method>()
+
         for (action in trace) {
             when (action) {
                 is MethodEntry -> {
                     traceStack.push(mutableListOf(action))
                     methodStack.push(action.method)
+                    methods.add(action.method)
                 }
                 is StaticInitEntry -> {
                     traceStack.push(mutableListOf(action))
@@ -49,22 +52,24 @@ class ObjectTraceManager : TraceManager<Trace> {
         assert(methodStack.size == traceStack.size) {
             log.error("Unexpected trace: number of method does not correspond to number of trace actions")
         }
-        val methods = mutableListOf<Method>()
+
         while (methodStack.isNotEmpty()) {
             val m = methodStack.pop()
-            methods.add(m)
             methodInfos.getOrPut(m, ::mutableSetOf) += Trace(traceStack.pop())
         }
+        countCoverage(method, this, null)
 
-//        for(m in methods)
-//            countCoverage(m, this)
-        countCoverage(method, this)
+        for(m in methods)
+            if(m != method)
+                countCoverage(m, this, method)
+            else continue
+
     }
 
     override fun isCovered(method: Method, bb: BasicBlock): Boolean =
         methodInfos[method]?.any { it.isCovered(bb) } ?: false
 
-    private fun countCoverage(m: Method, tm: TraceManager<Trace>) {
+    private fun countCoverage(m: Method, tm: TraceManager<Trace>, source: Method?) {
         val bodyBlocks = m.bodyBlocks.filterNot { it.isUnreachable }.map { it.originalBlock }.toSet()
         val catchBlocks = m.catchBlocks.filterNot { it.isUnreachable }.map { it.originalBlock }.toSet()
         val bodyCovered = bodyBlocks.count { this.isCovered(m, it) }
@@ -97,9 +102,13 @@ class ObjectTraceManager : TraceManager<Trace> {
         }
 
         val statistics = Statistics.invoke()
-
-        statistics.addIterationBodyCoverage(m, body, full)
-        statistics.addIterationBranchCoverage(m, branch, branchFull)
+        if(source == null) {
+            statistics.addIterationBodyCoverage(m, body, full)
+            statistics.addIterationBranchCoverage(m, branch, branchFull)
+        }
+        else {
+            statistics.setOtherMethodCoverage(source, m, body, full, branch, branchFull)
+        }
     }
 
 }

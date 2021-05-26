@@ -1,5 +1,6 @@
 package org.jetbrains.research.kex.asm.analysis.concolic
 
+import kotlinx.coroutines.yield
 import org.jetbrains.research.kthelper.collection.queueOf
 import org.jetbrains.research.kthelper.logging.log
 import org.jetbrains.research.kex.trace.`object`.*
@@ -157,6 +158,9 @@ class StaticGraph(enterPoint: Method, target: Package) {
                         else {
                             log.debug("Wrapping CallInst failed: method is empty")
                         }
+
+                        val nextInst = nextInst(vertex.inst)?:continue
+                        next.add(wrapAndAddInst(nextInst,vertex))
                     }
 
                     else -> {
@@ -461,7 +465,7 @@ class StaticGraph(enterPoint: Method, target: Package) {
         }
     }
 
-    fun findPathsForSAP(curr: Vertex, ud: Int): MutableList<MutableList<Vertex>> {
+    suspend fun findPathsForSAP(curr: Vertex, ud: Int): MutableList<MutableList<Vertex>> {
         val paths = findPathsDFS(curr, ud, mutableListOf(), mutableListOf())
 
         if (paths.isEmpty())
@@ -483,7 +487,7 @@ class StaticGraph(enterPoint: Method, target: Package) {
         else paths
     }
 
-    private fun findPathsDFS(
+    private suspend fun findPathsDFS(
         curr: Vertex, ud: Int, path: MutableList<Vertex>,
         paths: MutableList<MutableList<Vertex>>
     ): MutableList<MutableList<Vertex>> {
@@ -497,6 +501,8 @@ class StaticGraph(enterPoint: Method, target: Package) {
             updatedPaths.add(path)
             return updatedPaths
         }
+
+        yield()
 
         for (successor in curr.successors) {
             val dist = ud - curr.weights[successor]!!

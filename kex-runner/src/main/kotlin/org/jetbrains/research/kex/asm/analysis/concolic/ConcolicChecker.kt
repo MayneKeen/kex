@@ -687,7 +687,7 @@ class ConcolicChecker(
             builder.apply()
     }
 
-    private fun getPaths(graph: StaticGraph, trace: Trace, vertex: Vertex, ud: Int): MutableList<MutableList<Vertex>> {
+    private suspend fun getPaths(graph: StaticGraph, trace: Trace, vertex: Vertex, ud: Int): MutableList<MutableList<Vertex>> {
         val paths = graph.findPathsForSAP(vertex, ud)
         if(paths.isEmpty())
             return mutableListOf()
