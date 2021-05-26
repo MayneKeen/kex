@@ -287,7 +287,6 @@ class ConcolicChecker(
 //        }
 //    }
 
-    //should me record statistics here?
     private suspend fun getRandomTraceUntilSuccess(method: Method): Trace? {
         var trace: Trace? = null
         var iterations = 0
@@ -333,6 +332,7 @@ class ConcolicChecker(
         }
         val statistics = Statistics.invoke() // org.jetbrains.research.kex.asm.analysis.concolic.Statistics
         statistics.measureOverallTime(method)
+
         val graph = StaticGraph(method, target)
 
         cfgds(graph, statistics)
@@ -365,11 +365,10 @@ class ConcolicChecker(
         statistics.incrementSolverRequests(method)
 
         if (result !is Result.SatResult) return null
-        //yield()
+        yield()
 
         val (instance, args) = tryOrNull {
             generator.generate("test${++counter}", method, checker.state, result.model)
-            //generateInputByModel(ctx, method, checker.state, result.model)
         } ?: return null
         yield()
 
@@ -390,13 +389,13 @@ class ConcolicChecker(
             when (action) {
                 is MethodEntry -> {
                     continue
-                }               //??
+                }
                 is MethodReturn -> {
                     continue
-                }             //??
+                }
                 is MethodThrow -> {
                     continue
-                }              //??
+                }
                 is MethodCall -> {
                     if (currentBlock != null && currentBlock.isNotEmpty) {
                         val temp = currentBlock.instructions.filterIsInstance<CallInst>()
@@ -425,8 +424,9 @@ class ConcolicChecker(
                         continue
                     currentBlock.instructions.forEach {
                         val v = it.find()
-                        if(v != null)
-                            set.add(v) }
+                        if (v != null)
+                            set.add(v)
+                    }
                     val vert = currentBlock.terminator.find() ?: continue
                     set.add(vert)
                     continue
@@ -437,8 +437,9 @@ class ConcolicChecker(
                         continue
                     currentBlock.instructions.forEach {
                         val v = it.find()
-                        if(v != null)
-                            set.add(v) }
+                        if (v != null)
+                            set.add(v)
+                    }
                     val vert = currentBlock.terminator.find() ?: continue
                     set.add(vert)
                 }
@@ -448,8 +449,9 @@ class ConcolicChecker(
                         continue
                     currentBlock.instructions.forEach {
                         val v = it.find()
-                        if(v != null)
-                            set.add(v) }
+                        if (v != null)
+                            set.add(v)
+                    }
                     val vert = currentBlock.terminator.find() ?: continue
                     set.add(vert)
                 }
@@ -470,13 +472,12 @@ class ConcolicChecker(
 
         fun Instruction.isBranch(): Boolean = this is BranchInst || this is SwitchInst || this is TableSwitchInst
         fun Vertex.isBranch(): Boolean {
-            if(this is TerminateVert) {
+            if (this is TerminateVert) {
                 if (this.inst.isBranch())
                     return true
                 this.predecessors.forEach { if (it.inst.isBranch()) return true }
                 return false
-            }
-            else return false
+            } else return false
         }
 
         val methodStack = stackOf<Method>()
@@ -557,18 +558,10 @@ class ConcolicChecker(
                             action.method,
                             ConcolicStateBuilder.CallParameters(action.returnValue, mappings)
                         )
-                        if(vert != null)
+                        if (vert != null)
                             prevVert = vert
                         continue
                     }
-//                    completelyMatched = false
-//                    if (prevVert.isBranch() ||
-//                        (currentBlock.predecessors.any
-//                        { it.terminator.isBranch() })
-//                    ) {
-//                        builder.forceByType(prevVert as TerminateVert, currentBlock, path)
-//                        break
-//                    }
 
                 }
                 is BlockEntry -> {
@@ -578,23 +571,23 @@ class ConcolicChecker(
                     val vert = currentBlock.instructions.first().find()
                     val list = mutableListOf<Vertex>()
 
-                    for(inst in currentBlock.instructions) {
-                        val vert = inst.find()?:continue
-                        list.add(vert)
+                    for (inst in currentBlock.instructions) {
+                        val v = inst.find() ?: continue
+                        list.add(v)
                     }
 
-                    if(prevVert.isBranch() && !list.contains(path[path.indexOf(prevVert)+1])) {
+                    if (prevVert.isBranch() && !list.contains(path[path.indexOf(prevVert) + 1])) {
                         completelyMatched = false
+                        log.debug("SAP: Found a mismatch")
                         builder.dropLast()
                         builder.forceByType(prevVert as TerminateVert, path)
                         break
                     }
 
                     if (vert != null && path.contains(vert)) {
-                        //prevVert = vert
                         continue
                     }
-                    if(vert == null)
+                    if (vert == null)
                         continue
 
                     completelyMatched = false
@@ -611,7 +604,7 @@ class ConcolicChecker(
                     if (currentBlock.isEmpty)
                         continue
                     val vert = currentBlock.terminator.find()
-                    if(vert != null)
+                    if (vert != null)
                         prevVert = vert
                     if (vert == null || path.contains(vert)) {
                         val prevBlock = prevBlockStack.pop()
@@ -624,8 +617,6 @@ class ConcolicChecker(
                     }
                     completelyMatched = false
                     if (prevVert.isBranch()
-//                        || (currentBlock.predecessors.any
-//                        { it.terminator.isBranch() })
                     ) {
                         builder.forceByType(prevVert as TerminateVert, path)
                         break
@@ -652,7 +643,6 @@ class ConcolicChecker(
                         builder.forceByType(prevVert as TerminateVert, path)
                         break
                     }
-
                 }
                 is BlockSwitch -> {
                     currentBlock = action.block
@@ -687,36 +677,41 @@ class ConcolicChecker(
             builder.apply()
     }
 
-    private suspend fun getPaths(graph: StaticGraph, trace: Trace, vertex: Vertex, ud: Int): MutableList<MutableList<Vertex>> {
+    private suspend fun getPaths(
+        graph: StaticGraph,
+        trace: Trace,
+        vertex: Vertex,
+        ud: Int
+    ): MutableList<MutableList<Vertex>> {
         val paths = graph.findPathsForSAP(vertex, ud)
-        if(paths.isEmpty())
+        if (paths.isEmpty())
             return mutableListOf()
         val traceVertices = traceToSetVertex(graph, trace)
-        if(!traceVertices.contains(vertex)) {
-            log.debug("Graph: smth went wrong, vertex is not in trace")
+        if (!traceVertices.contains(vertex)) {
+            log.warn("Graph: could not get any path for SAP -- can't find vertex in last trace")
             return mutableListOf()
         }
         val pathBeginning = mutableListOf<Vertex>()
         val result = mutableListOf<MutableList<Vertex>>()
 
-        for(v in traceVertices)
-            if(v == vertex)
+        for (v in traceVertices)
+            if (v == vertex)
                 break
             else
                 pathBeginning.add(v)
 
-       for(path in paths) {
-           val list = mutableListOf<Vertex>()
-           list.addAll(pathBeginning)
-           list.addAll(path)
-           result.add(list)
-       }
+        for (path in paths) {
+            val list = mutableListOf<Vertex>()
+            list.addAll(pathBeginning)
+            list.addAll(path)
+            result.add(list)
+        }
         return result
     }
 
     private suspend fun searchAlongPath(
         graph: StaticGraph, trace: Trace, path: MutableList<Vertex>, statistics: Statistics
-        ): Trace? {
+    ): Trace? {
         var lastTrace = trace
         var failedIterations = 0
 
@@ -732,12 +727,12 @@ class ConcolicChecker(
 
             val ps = findMismatch(graph.rootMethod, graph, trace, path)
             if (ps == null && lastTrace != trace) {
-                log.debug("SAP: succeed")
+                log.debug("SAP: no mismatch found after last execution")
                 return lastTrace
             }
 
             if (ps == null || ps.isEmpty) {
-                log.debug("SAP: could not generate a predicateState")
+                log.warn("SAP: could not generate a predicateState")
                 return if (lastTrace != trace)
                     lastTrace
                 else null
@@ -747,7 +742,7 @@ class ConcolicChecker(
             yield()
             bound--
 
-            if(tempTrace == lastTrace) {
+            if (tempTrace == lastTrace) {
                 log.warn("SAP: New trace has no differences from the previous one")
                 failedIterations++
                 continue
@@ -763,10 +758,9 @@ class ConcolicChecker(
             val newBranchCovered = graph.addTrace(lastTrace)
 
             if (!newBranchCovered) {
-                log.debug("SAP: a failed iteration")
+                log.debug("SAP: no new branch covered")
                 failedIterations++
             }
-
         }
         return lastTrace
     }
@@ -778,37 +772,38 @@ class ConcolicChecker(
 
     private suspend fun finish(graph: StaticGraph, statistics: Statistics) {
         log.debug("Finishing the search")
-
         statistics.print(graph.rootMethod)
+        statistics.log()
         yield()
     }
 
-    private fun StaticGraph.isFullyCovered() = this.vertices.filterNot{ it.isCovered }.isEmpty()
+    private fun StaticGraph.isFullyCovered() = this.vertices.filterNot { it.isCovered }.isEmpty()
 
-    private suspend fun cfgds(graph: StaticGraph, statistics: Statistics) { // org.jetbrains.research.kex.asm.analysis.concolic.Statistics
+    private suspend fun cfgds(
+        graph: StaticGraph,
+        statistics: Statistics
+    ) { // org.jetbrains.research.kex.asm.analysis.concolic.Statistics
         var lastTrace = getRandomTraceUntilSuccess(graph.rootMethod)
         yield()
 
         var fail = false
 
         if (lastTrace == null || lastTrace.actions.isEmpty()) {
-            log.debug("CFGDS: Could not process any trace in method ${graph.rootMethod}")
+            log.debug("CFGDS: Could not process a random trace in method ${graph.rootMethod}")
             statistics.stopTimeMeasurement(graph.rootMethod, fail)
             finish(graph, statistics)
             return
         }
-
         graph.addTrace(lastTrace)
 
         val failedToForce = mutableSetOf<Vertex>()
         val failedPaths = mutableListOf<MutableList<Vertex>>()
         var failedIterations = 0
 
-
         while (true) {
             statistics.startIterationTimeMeasurement(graph.rootMethod)
 
-            if(graph.isFullyCovered()) {
+            if (graph.isFullyCovered()) {
                 log.debug("CFGDS: Method ${graph.rootMethod.name} is fully covered")
                 fail = false
                 break
@@ -823,8 +818,7 @@ class ConcolicChecker(
             log.debug("another iteration of CFGDS")
 
             log.debug("CFGDS: Searching for a branch to force...")
-            var found = graph.nextBranchToForce(failedToForce/*alreadyForced*/)
-
+            val found = graph.nextBranchToForce(failedToForce/*alreadyForced*/)
 
             if (found == null) {
                 log.debug("CFGDS: Could not find a branch to force, exiting")
@@ -834,48 +828,46 @@ class ConcolicChecker(
 
             statistics.stopBranchSelectionMeasurement(graph.rootMethod)
 
-            log.debug("found a branch")
+            log.info("CFGDS: Found a branch")
             val branch = found.inst.parent
 
             val ps = getState(branch)
             found.tries++
 
-            if (ps == null /*|| ps.isEmpty*/) {
-                log.debug("CFGDS: Could not generate a PredicateState for block $branch")
+            if (ps == null || ps.isEmpty) {
+                log.warn("CFGDS: Could not generate a PredicateState for block $branch, continuing")
                 failedIterations++
                 statistics.stopIterationTimeMeasurement(graph.rootMethod)
                 failedToForce.add(found)
                 continue
             }
 
-            log.debug("CFGDS: PS assembled correctly")
+            log.info("CFGDS: PS assembled correctly")
 
             val tempTrace = execute(graph.rootMethod, lastTrace!!, ps, statistics)
             yield()
 
             if (tempTrace == null || tempTrace.actions.isNullOrEmpty()) {
-                log.debug("CFGDS: Could not process a trace for branch $branch")
+                log.warn("CFGDS: Could not process a trace for branch $branch")
                 failedIterations++
                 statistics.stopIterationTimeMeasurement(graph.rootMethod)
                 failedToForce.add(found)
                 continue
             }
+
             lastTrace = tempTrace
-            log.debug("CFGDS: Just generated a trace")
+            log.info("CFGDS: Just generated a trace")
 
             val lastTraceVertices = traceToSetVertex(graph, lastTrace)
-
             val newBranchCovered = graph.addTrace(lastTrace)
 
-            if (!newBranchCovered) {
-                //failedIterations++
-                //failedToForce.add(found)
+            if (!newBranchCovered)
                 log.debug("CFGDS: Processing a trace was successful, but no new branches are covered")
-            } else {
+            else
                 failedIterations = 0
-            }
+
             if (failedIterations > 20) {
-                log.debug("CFGDS: too many failed iterations in a row, exiting")
+                log.warn("CFGDS: too many failed iterations in a row, exiting")
                 fail = true
                 break
             }
@@ -889,40 +881,39 @@ class ConcolicChecker(
             log.debug("CFGDS: entering searchAlongPath")
 
             val pathList = getPaths(graph, lastTrace, found, ud).filterNot {
-                failedPaths.contains(it) || it.toMutableSet() == lastTraceVertices }
+                failedPaths.contains(it) || it.toMutableSet() == lastTraceVertices
+            }
 
             if (pathList.isEmpty()) {
-                log.debug("CFGDS: No path found for SAP, continuing")
+                log.debug("CFGDS: No paths found for SAP, continuing")
                 found.tries += 1
-                if(!newBranchCovered) {
+                if (!newBranchCovered)
                     failedIterations++
-                }
                 statistics.stopIterationTimeMeasurement(graph.rootMethod)
                 continue
             }
 
-            log.debug("CFGDS: ${pathList.size} paths for SAP have been found")
+            log.info("CFGDS: ${pathList.size} paths for SAP have been found")
 
             var sapSucceed = false
             for (path in pathList) {
                 val trace = searchAlongPath(graph, lastTrace!!, path, statistics)
                 yield()
                 if (trace == null || trace.actions.isNullOrEmpty()) {
-                    log.debug("CFGDS: SAP did not succeed on current path")
+                    log.debug("CFGDS: no trace received from SAP")
                     failedPaths.add(path)
                     continue
                 }
                 sapSucceed = true
-                log.debug("CFGDS: SAP succeed on current path")
+                log.debug("CFGDS: SAP success")
                 lastTrace = trace
                 break
             }
-
             if (!sapSucceed) {
                 found.tries++
-                if(!newBranchCovered) {
+                if (!newBranchCovered)
                     failedIterations++
-                }
+
                 log.debug("CFGDS: SAP failed")
                 statistics.stopIterationTimeMeasurement(graph.rootMethod)
                 continue
@@ -939,5 +930,4 @@ class ConcolicChecker(
         statistics.stopTimeMeasurement(graph.rootMethod, fail)
         finish(graph, statistics)
     }
-
 }

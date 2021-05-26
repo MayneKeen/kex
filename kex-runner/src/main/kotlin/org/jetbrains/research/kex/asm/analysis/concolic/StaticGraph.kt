@@ -38,21 +38,21 @@ class StaticGraph(enterPoint: Method, target: Package) {
     }
 
     private fun Method.isInteresting() = when {
-            this.isAbstract -> false
-            this.isStaticInitializer -> false
+        this.isAbstract -> false
+        this.isStaticInitializer -> false
 
-            !this.hasBody -> false
-            this.isConstructor -> false
-            else -> true
-        }
+        !this.hasBody -> false
+        this.isConstructor -> false
+        else -> true
+    }
 
     private fun getAllOverrides(target: Package, method: Method): Set<Method> =
         method.cm.getAllSubtypesOf(method.`class`)
+            .asSequence()
             .filterIsInstance<ConcreteClass>()
             .filter { target.isParent(it.`package`) }
             .map { it.getMethod(method.name, method.desc) }.filter { it.isInteresting() }
             .toSet()
-
 
     private fun addWeight(from: Vertex?, to: Vertex?, weight: Int): Boolean {
         if (from == null || to == null || weight <= -2  /*|| !from.successors.contains(to) */)
@@ -146,7 +146,7 @@ class StaticGraph(enterPoint: Method, target: Package) {
                     is CallVert -> {
                         if (vertex.inst.method.isNotEmpty()) {
                             //next.add(wrapAndAddInst(vertex.inst.method.entry.first(), vertex))
-                            val overrides = getAllOverrides(target ,vertex.inst.method).filter { it.isNotEmpty() }
+                            val overrides = getAllOverrides(target, vertex.inst.method).filter { it.isNotEmpty() }
                             log.debug("overrides.size = ${overrides.size}")
 
                             overrides.forEach {
@@ -154,13 +154,12 @@ class StaticGraph(enterPoint: Method, target: Package) {
                                 log.debug("Graph: Wrapping method ${it.name} successful")
                             }
 
-                        }
-                        else {
+                        } else {
                             log.debug("Wrapping CallInst failed: method is empty")
                         }
 
-                        val nextInst = nextInst(vertex.inst)?:continue
-                        next.add(wrapAndAddInst(nextInst,vertex))
+                        val nextInst = nextInst(vertex.inst) ?: continue
+                        next.add(wrapAndAddInst(nextInst, vertex))
                     }
 
                     else -> {
@@ -171,7 +170,7 @@ class StaticGraph(enterPoint: Method, target: Package) {
                 }
                 visited.add(vertex)
             }//current loop ends
-            next = next.filter{!current.contains(it)}.toMutableSet()
+            next = next.filter { !current.contains(it) }.toMutableSet()
 
             current = next
             next = mutableSetOf()
@@ -204,7 +203,6 @@ class StaticGraph(enterPoint: Method, target: Package) {
         var prevBlock: BasicBlock? = null
         var currentBlock: BasicBlock? = null
 
-//        val list = mutableSetOf<Vertex>()
         for (action in actions) {
             when (action) {
                 is MethodEntry -> {
@@ -220,11 +218,10 @@ class StaticGraph(enterPoint: Method, target: Package) {
                     if (currentBlock != null && currentBlock.isNotEmpty) {
                         val temp = currentBlock.instructions.filterIsInstance<CallInst>()
                         val vert = temp.find { it.method == action.method }?.find()
-//                        if(vert!=null)
-//                            list.add(vert)
 
                         if (vert != null && prevBlock != null && prevBlock.isNotEmpty &&
-                            prevBlock.terminator.isBranch() && !vert.isCovered) {
+                            prevBlock.terminator.isBranch() && !vert.isCovered
+                        ) {
                             newBranchCovered = true
                         }
                         vert?.isCovered = true
@@ -242,35 +239,31 @@ class StaticGraph(enterPoint: Method, target: Package) {
                     if (currentBlock.isEmpty)
                         continue
                     val vert = currentBlock.instructions.first().find()
-//                    if(vert!=null)
-//                        list.add(vert)
 
                     if (vert != null && prevBlock != null && prevBlock.isNotEmpty &&
-                        prevBlock.terminator.isBranch() && !vert.isCovered) {
+                        prevBlock.terminator.isBranch() && !vert.isCovered
+                    ) {
                         newBranchCovered = true
                     }
                     vert?.isCovered = true
                 }
                 is BlockJump -> {
-                    //prevBlock = currentBlock
                     currentBlock = action.block
                     if (currentBlock.isEmpty)
                         continue
                     for (inst in currentBlock.instructions) {
-//                        if(inst.find() != null)
-//                            list.add(inst.find()!!)
                         inst.find()?.isCovered = true
                     }
                     val vert = currentBlock.terminator.find()
 
-                    if(vert != null && prevBlock != null && prevBlock.isNotEmpty &&
-                        prevBlock.terminator.isBranch() && !vert.isCovered) {
+                    if (vert != null && prevBlock != null && prevBlock.isNotEmpty &&
+                        prevBlock.terminator.isBranch() && !vert.isCovered
+                    ) {
                         newBranchCovered = true
                     }
                     vert?.isCovered = true
                 }
                 is BlockBranch -> {
-                    //prevBlock = currentBlock
                     currentBlock = action.block
                     if (currentBlock.isEmpty)
                         continue
@@ -280,20 +273,18 @@ class StaticGraph(enterPoint: Method, target: Package) {
                         vert.isCovered = true
                     }
 
-                    if(prevBlock != null && prevBlock.isNotEmpty &&
-                        prevBlock.terminator.isBranch() && !vert.isCovered) {
+                    if (prevBlock != null && prevBlock.isNotEmpty &&
+                        prevBlock.terminator.isBranch() && !vert.isCovered
+                    ) {
                         newBranchCovered = true
                         vert.isCovered = true
                     }
 
                     for (inst in currentBlock.instructions) {
-//                        if(inst.find() != null)
-//                            list.add(inst.find()!!)
                         inst.find()?.isCovered = true
                     }
                 }
                 is BlockSwitch -> {
-                    //prevBlock = currentBlock
                     currentBlock = action.block
                     if (currentBlock.isEmpty)
                         continue
@@ -303,16 +294,16 @@ class StaticGraph(enterPoint: Method, target: Package) {
                         vert.isCovered = true
                     }
 
-                    if(prevBlock != null && prevBlock.isNotEmpty &&
-                        prevBlock.terminator.isBranch() && !vert.isCovered) {
+                    if (prevBlock != null && prevBlock.isNotEmpty &&
+                        prevBlock.terminator.isBranch() && !vert.isCovered
+                    ) {
                         newBranchCovered = true
                         vert.isCovered = true
                     }
 
                     for (inst in currentBlock.instructions) {
                         inst.find()?.isCovered = true
-//                        if(inst.find() != null)
-//                            list.add(inst.find()!!)
+
                     }
                 }
             }
@@ -326,9 +317,6 @@ class StaticGraph(enterPoint: Method, target: Package) {
 
         log.debug("Graph: trace added successfully, recomputing UD")
         recomputeUncoveredDistance()
-        val branches = vertices.filter { it.inst.isBranch() }
-        if(branches.size > 0)
-            log.debug("here we r")
 
         return newBranchCovered
     }
@@ -338,8 +326,8 @@ class StaticGraph(enterPoint: Method, target: Package) {
     private fun recomputeUncoveredDistance() {
         val uncovered = findUncovered().filter { it.isBranch() }.toMutableSet()
 
-        if(uncovered.isEmpty()) {
-            log.debug("Graph: No uncovered branches to recompute uncovered distance to")
+        if (uncovered.isEmpty()) {
+            log.info("Graph: No uncovered branches to recompute uncovered distance to")
             return
         }
 
@@ -367,9 +355,9 @@ class StaticGraph(enterPoint: Method, target: Package) {
     private fun Instruction.isBranch(): Boolean = this is BranchInst || this is SwitchInst || this is TableSwitchInst
 
     private fun Vertex.isBranch(): Boolean {
-        if(this.inst.isBranch())
+        if (this.inst.isBranch())
             return true
-        if(this.predecessors.any{ it.inst.isBranch() }) return true
+        if (this.predecessors.any { it.inst.isBranch() }) return true
         return false
     }
 
@@ -434,18 +422,10 @@ class StaticGraph(enterPoint: Method, target: Package) {
 
         val covered = vertices.filter { it.isCovered && !failed.contains(it) }
 
-        //4 debug only {
-            val instances = covered.filter { it.isBranch() }
-            val total = vertices.filter { it.isBranch()}
-
-            log.debug("Graph: Total branches quantity = (" + total.size + ")")
-            log.debug("Graph: covered branches quantity = (" + instances.size + ")")
-        //{
-
         for (vertex in covered) {
-            if(failed.contains(vertex))
+            if (failed.contains(vertex))
                 continue
-            result = if(vertex.isBranch())
+            result = if (vertex.isBranch())
                 checkUD(result, vertex, ud)
             else
                 result
@@ -478,7 +458,7 @@ class StaticGraph(enterPoint: Method, target: Package) {
             if (uncovered.isEmpty())
                 iterator.remove()
             else {
-                if(uncovered.count { it.isBranch() } < 1)
+                if (uncovered.count { it.isBranch() } < 1)
                     iterator.remove()
             }
         }
@@ -512,7 +492,7 @@ class StaticGraph(enterPoint: Method, target: Package) {
 
             val newPath = mutableListOf<Vertex>()
             newPath.addAll(path)
-            if(!newPath.contains(curr))
+            if (!newPath.contains(curr))
                 newPath.add(curr)
             newPath.add(successor)
 
