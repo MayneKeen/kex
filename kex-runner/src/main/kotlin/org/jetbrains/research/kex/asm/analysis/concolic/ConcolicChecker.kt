@@ -34,6 +34,7 @@ import org.jetbrains.research.kfg.ir.Method
 import org.jetbrains.research.kfg.ir.value.Value
 import org.jetbrains.research.kfg.ir.value.instruction.*
 import org.jetbrains.research.kfg.visitor.MethodVisitor
+import java.io.File
 import java.util.*
 
 private val timeLimit by lazy { kexConfig.getLongValue("concolic", "timeLimit", 10000L) }
@@ -331,6 +332,11 @@ class ConcolicChecker(
             return
         }
         val statistics = Statistics.invoke() // org.jetbrains.research.kex.asm.analysis.concolic.Statistics
+        /*val algorithm = "cfgds"
+        val path = "results/${algorithm}_${target.name}"
+        val file = File(path)
+
+        statistics.start(file, true, algorithm, target)*/
         statistics.measureOverallTime(method)
 
         val graph = StaticGraph(method, target)
@@ -373,6 +379,8 @@ class ConcolicChecker(
         yield()
 
         val resultingTrace = tryOrNull { collectTrace(method, instance, args) } ?: return null
+        manager.addTrace(method, resultingTrace)
+
         if (buildState(method, resultingTrace).path.startsWith(path))
             paths += path
         return resultingTrace
@@ -773,7 +781,6 @@ class ConcolicChecker(
     private suspend fun finish(graph: StaticGraph, statistics: Statistics) {
         log.debug("Finishing the search")
         statistics.print(graph.rootMethod)
-        statistics.log()
         yield()
     }
 
@@ -801,6 +808,8 @@ class ConcolicChecker(
         var failedIterations = 0
 
         while (true) {
+            fail = false
+
             statistics.startIterationTimeMeasurement(graph.rootMethod)
 
             if (graph.isFullyCovered()) {

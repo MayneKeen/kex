@@ -8,7 +8,9 @@ import java.nio.file.Files
 import java.nio.file.StandardOpenOption
 import java.time.Duration
 import java.time.temporal.ChronoUnit
+import org.jetbrains.research.kfg.Package
 import kotlin.system.exitProcess
+import kotlin.time.milliseconds
 
 class Statistics private constructor() {
 
@@ -59,8 +61,7 @@ class Statistics private constructor() {
 
         try {
             val itStart = ms.iterationsStart[ms.itNumber]
-            ms.branchSelectionDuration.add(
-                Duration.of(
+            ms.branchSelectionDuration.add(Duration.of(
                     System.currentTimeMillis() - itStart, ChronoUnit.MILLIS
                 )
             )
@@ -105,7 +106,7 @@ class Statistics private constructor() {
 
     fun updateMethodCoverage(method: Method) {
         val ms = getMethodStats(method/*, algorithm*/)
-        if (ms.isEmpty())
+        if (ms.fullBranchCoverage.isEmpty() || ms.fullBranchCoverage.isEmpty())
             return
         ms.bodyFull = ms.fullBodyCoverage.last()
         ms.branchFull = ms.fullBranchCoverage.last()
@@ -132,8 +133,8 @@ class Statistics private constructor() {
         val ms = getMethodStats(method/*, algorithm*/)
         ms.bodyCoverage.add(body)
         ms.fullBodyCoverage.add(full)
-        if (ms.isEmpty() || ms.branchCoverage.isEmpty() || ms.fullBranchCoverage.isEmpty())
-            return
+        /*if (ms.isEmpty() || ms.branchCoverage.isEmpty() || ms.fullBranchCoverage.isEmpty())
+            return*/
         updateMethodCoverage(method)
     }
 
@@ -144,17 +145,39 @@ class Statistics private constructor() {
         val ms = getMethodStats(method/*, algorithm*/)
         ms.branchCoverage.add(branch)
         ms.fullBranchCoverage.add(branchFull)
-        if (ms.isEmpty() || ms.branchCoverage.isEmpty() || ms.fullBranchCoverage.isEmpty())
-            return
+        /*if (ms.isEmpty() || ms.branchCoverage.isEmpty() || ms.fullBranchCoverage.isEmpty())
+            return*/
         updateMethodCoverage(method)
     }
 
     private fun MethodStats.avgBranchSelectionTime(): Long {
-        if (this.branchSelectionDuration.isEmpty())
+        if (branchSelectionDuration.isEmpty())
             return 0.0.toLong()
         var sum = 0.0.toLong()
-        this.branchSelectionDuration.forEach { sum += it.toMillis() }
-        return sum / this.branchSelectionDuration.size
+        var count = 0
+        branchSelectionDuration.forEach {
+            if(it.toMillis() > 0.0.toLong()){
+                sum += it.toMillis()
+                count++
+            }
+        }
+        return if(count > 0 && sum > 0)
+            sum / count
+        else 0.toLong()
+    }
+
+    private fun MethodStats.getIterationsCoverage(): String {
+        val sb = StringBuilder()
+
+        val itDurations = this.itDurations.map { it.toMillis() }
+
+        sb.append(" iteration durations: ${itDurations.toString()} \n")
+        sb.append(" body coverage by iterations: ${this.bodyCoverage.toString()} \n" )
+        sb.append(" full body coverage by iterations: ${this.fullBodyCoverage.toString()}\n")
+        sb.append(" branch coverage by iterations: ${this.branchCoverage.toString()}\n")
+        sb.append(" full branch coverage by iterations: ${this.fullBranchCoverage.toString()}\n")
+
+        return sb.toString()
     }
 
     fun setOtherMethodCoverage(
@@ -207,6 +230,12 @@ class Statistics private constructor() {
                 val writer = Files.newBufferedWriter(logFile!!.toPath(), StandardOpenOption.APPEND)
                 writer.write(this.toString())
                 writer.newLine()
+                methodHolder.forEach{
+                    writer.write("Method ${it.method.name} stats: ")
+                    writer.newLine()
+                    writer.write(it.getIterationsCoverage())
+                    writer.newLine()
+                }
                 writer.flush()
                 writer.close()
             } catch (e: IOException) {
@@ -224,24 +253,43 @@ class Statistics private constructor() {
         var branchCoverage = 0.toDouble()
         var calls = 0
         var branchSelection = 0.toLong()
+        var div = methodHolder.size
+        var count = 0
 
-        methodHolder.forEach {
-            iterations += it.itNumber
-            elapsedTime += it.elapsedTime.toMillis()
-            bodyCoverage += it.bodyFull
-            branchCoverage += it.branchFull
-            calls += it.solverCalls
-            branchSelection += it.avgBranchSelectionTime()
+        for(ms in methodHolder) {
+            iterations += ms.itNumber
+            elapsedTime += ms.elapsedTime.toMillis()
+            bodyCoverage += ms.bodyFull
+            branchCoverage += ms.branchFull
+            calls += ms.solverCalls
+
+            val avg = ms.avgBranchSelectionTime()
+            if(avg > 0) {
+                count++
+                branchSelection += avg
+            }
+            for(other in ms.otherMethodsInfo.keys) {
+                if(methodHolder.any { it.method == other }) {
+                    continue
+                }
+                val otm = ms.otherMethodsInfo[other]!!
+                if(otm.fullBodyCoverage.isNotEmpty() && otm.fullBranchCoverage.isNotEmpty()) {
+                    bodyCoverage += otm.fullBodyCoverage.last()
+                    branchCoverage += otm.fullBranchCoverage.last()
+                    div++
+                }
+            }
         }
+
         val sb = StringBuilder()
         sb.append("Overall statistics: \n")
         sb.append("     number of methods: ${methodHolder.size}\n")
         sb.append("     number of iterations: ${iterations}\n")
         sb.append("     elapsed time: ${elapsedTime} ms\n")
-        sb.append("     avg body coverage: ${bodyCoverage / methodHolder.size}\n")
-        sb.append("     avg branch coverage: ${branchCoverage / methodHolder.size}\n")
+        sb.append("     avg body coverage: ${bodyCoverage / div}\n")
+        sb.append("     avg branch coverage: ${branchCoverage / div}\n")
         sb.append("     total solver calls: ${calls}\n")
-        sb.append("     avg branch selection time: ${branchSelection / methodHolder.size} ms\n")
+        sb.append("     avg branch selection time: ${branchSelection / count} ms\n")
         return sb.toString()
     }
 
@@ -267,6 +315,44 @@ class Statistics private constructor() {
         return sb.toString()
     }
 
+    fun start(file: File, createNew: Boolean, alg: String, pkg: Package) {
+        setLoggingFile(file, createNew)
+        setAlg(alg)
+        setPkg(pkg)
+    }
+
+
+
+    private fun setLoggingFile(file: File, createNew: Boolean) {
+        logFile = file
+        if (createNew) {
+            var i = 1
+            var newFile = File(file.path + "$i.log")
+            while(newFile.exists()) {
+                newFile = File(file.path + "$i.log")
+                i++
+            }
+            newFile.parentFile.mkdirs()
+            newFile.createNewFile()
+            log.info("Stats will be here: " + newFile.path.toString())
+
+            val writer = Files.newBufferedWriter(newFile.toPath(), StandardOpenOption.WRITE)
+            writer.write("algorithm: $algorithm, target: ${target?.name}")
+            writer.newLine()
+            writer.flush()
+            writer.close()
+            logFile = newFile
+        }
+    }
+
+    private fun setAlg(alg: String) {
+        algorithm = alg
+    }
+
+    private fun setPkg(pkg: Package) {
+        target = pkg
+    }
+
     companion object {
         private var instance: Statistics? = null
         operator fun invoke(): Statistics = synchronized(this) {
@@ -279,31 +365,11 @@ class Statistics private constructor() {
         var avgCoverage = 0.0
         var avgBranchCoverage = 0.0
 
-        fun setLoggingFile(file: File, createNew: Boolean) {
-            logFile = file
-            if (createNew) {
-                if (file.exists()) {
-                    file.delete()
-                }
-                file.createNewFile()
-                val writer = Files.newBufferedWriter(file.toPath(), StandardOpenOption.WRITE)
-                writer.write("algorithm: $algorithm")
-                writer.newLine()
-                writer.flush()
-                writer.close()
-            }
-        }
-
-        fun setAlg(algorithm: String) {
-            this.algorithm = algorithm
-        }
 
         var algorithm = ""
-            private set
+        var target: Package? = null
         var logFile: File? = null
-            private set
     }
-
 }
 
 data class OtherMethodInfo(

@@ -299,6 +299,15 @@ class Kex(args: Array<String>) {
         val psa = PredicateStateAnalysis(analysisContext.cm)
         val cm = CoverageCounter(originalContext.cm, traceManager)
 
+        val statistics = Statistics.invoke()
+        val algorithm = "cfgds"
+        val dir = File("results")
+        dir.mkdir()
+        val path = "${algorithm}/${`package`.name}"
+        val file = File(dir, path)
+
+        statistics.start(file, true, algorithm, `package`)
+
         runPipeline(analysisContext) {
             +ConcolicChecker(analysisContext, psa, traceManager, `package`)
             +cm
@@ -309,7 +318,8 @@ class Kex(args: Array<String>) {
                 "body coverage: ${String.format("%.2f", coverage.bodyCoverage)}%\n" +
                 "full coverage: ${String.format("%.2f", coverage.fullCoverage)}%")
         DescriptorStatistics.printStatistics()
-        Statistics.invoke().print()
+        statistics.print()
+        statistics.log()
     }
 
     private fun <T> createCoverageCounter(cm: ClassManager, tm: TraceManager<T>) = when {
