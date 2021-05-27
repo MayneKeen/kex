@@ -370,7 +370,7 @@ class ConcolicChecker(
         val psa = PredicateStateAnalysis(cm)
         try {
             val checker = Checker(method, loader, psa)
-            val result = checker.prepareAndCheck(ps)
+            val result = checker.prepareAndCheck(ps)    //org/antlr/v4/codegen/target/SwiftTarget$SwiftStringRenderer::toString(java/lang/Object, java/lang/String, java/util/Locale): java/lang/String
 
             statistics.incrementSolverRequests(method)
 
@@ -389,8 +389,8 @@ class ConcolicChecker(
                 paths += path
             return resultingTrace
         }
-        catch (e: ExceptionInInitializerError) {
-            log.warn("An ${e.toString()} has occurred while analyzing method $method")
+        catch (t: Throwable) { // !NoClassDefFoundError, ExceptionInInitializerError
+            log.warn("An ${t.toString()} has occurred while analyzing method $method")
             return null
         }
     }
