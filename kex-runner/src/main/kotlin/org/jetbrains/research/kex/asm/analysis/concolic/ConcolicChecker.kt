@@ -67,10 +67,14 @@ class ConcolicChecker(
         initializeGenerator(method)
         try {
             runBlocking {
+                val graph = if(method.hasBody) StaticGraph(method, target) else null
+
                 withTimeout(timeLimit) {
                     try {
                         //process(method)
-                        processCFGDS(method, target)
+                        if(graph != null)
+                            processCFGDS(method, graph, target)
+                        else log.debug("Method $method has no body")
                     } catch (e: TimeoutException) {
                         log.debug("Timeout on running $method")
                     }
@@ -326,7 +330,7 @@ class ConcolicChecker(
         return resultingTrace
     }
 
-    private suspend fun processCFGDS(method: Method, target: Package) {
+    private suspend fun processCFGDS(method: Method, graph: StaticGraph, target: Package) {
         if (!method.hasBody) {
             log.debug("Method $method is empty or has empty body")
             return
@@ -339,8 +343,7 @@ class ConcolicChecker(
         statistics.start(file, true, algorithm, target)*/
         statistics.measureOverallTime(method)
 
-        val graph = StaticGraph(method, target)
-
+//        val graph = StaticGraph(method, target)
         cfgds(graph, statistics)
 
         yield()
@@ -365,25 +368,31 @@ class ConcolicChecker(
         log.debug("New trace: $ps")
 
         val psa = PredicateStateAnalysis(cm)
-        val checker = Checker(method, loader, psa)
-        val result = checker.prepareAndCheck(ps)
+        try {
+            val checker = Checker(method, loader, psa)
+            val result = checker.prepareAndCheck(ps)
 
-        statistics.incrementSolverRequests(method)
+            statistics.incrementSolverRequests(method)
 
-        if (result !is Result.SatResult) return null
-        yield()
+            if (result !is Result.SatResult) return null
+            yield()
 
-        val (instance, args) = tryOrNull {
-            generator.generate("test${++counter}", method, checker.state, result.model)
-        } ?: return null
-        yield()
+            val (instance, args) = tryOrNull {
+                generator.generate("test${++counter}", method, checker.state, result.model)
+            } ?: return null
+            yield()
 
-        val resultingTrace = tryOrNull { collectTrace(method, instance, args) } ?: return null
-        manager.addTrace(method, resultingTrace)
+            val resultingTrace = tryOrNull { collectTrace(method, instance, args) } ?: return null
+            manager.addTrace(method, resultingTrace)
 
-        if (buildState(method, resultingTrace).path.startsWith(path))
-            paths += path
-        return resultingTrace
+            if (buildState(method, resultingTrace).path.startsWith(path))
+                paths += path
+            return resultingTrace
+        }
+        catch (e: ExceptionInInitializerError) {
+            log.warn("An ${e.toString()} has occurred while analyzing method $method")
+            return null
+        }
     }
 
     private fun traceToSetVertex(graph: StaticGraph, trace: Trace): MutableSet<Vertex> {
