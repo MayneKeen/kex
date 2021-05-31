@@ -203,6 +203,14 @@ class ConcolicStateBuilder(val cm: ClassManager, val psa: PredicateStateAnalysis
         }
     }
 
+    fun replacePhi(phi: PhiInst, predecessor: BasicBlock) {
+        stateBuilder += require(phi.location) {
+            val assignment = mkValue(phi.incomings[predecessor]!!)
+            val result = mkNewValue(phi)
+            result equality assignment
+        }
+    }
+
     private fun StateBuilder.drop() {
         this.current = this.current.dropLast(1)
     }

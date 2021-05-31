@@ -350,6 +350,58 @@ class ConcolicChecker(
         return
     }
 
+    private fun constructState(graph: StaticGraph, vertex: Vertex): PredicateState? {
+        //fun Instruction.find() = graph.vertices.find { it.inst == this }
+        if(!vertex.isBranch())
+            return null
+        val path = graph.getPathToBranch(vertex) ?: return null
+        val builder = ConcolicStateBuilder(cm, psa)
+
+        for((index, v) in path.withIndex()) {
+            when (v.inst) {
+                is BranchInst -> {
+                    if (path.size > index + 1)
+                        builder.forceByType(v as TerminateVert, path)
+                }
+                is SwitchInst -> {
+                    if (path.size > index + 1)
+                        builder.forceByType(v as TerminateVert, path)
+                }
+                is TableSwitchInst -> {
+                    if (path.size > index + 1)
+                        builder.forceByType(v as TerminateVert, path)
+                }
+                is JumpInst -> {
+                    if (path.size > index + 1)
+                        builder.forceByType(v as TerminateVert, path)
+                }
+                else -> {
+                    if (v.inst.isTerminate)
+                        if (path.size > index + 1) {
+                            val bb = path[index + 1].inst.parent
+                            builder.buildTerminateInst(v.inst as TerminateInst, bb)
+                        } else {
+                            val inst = v.inst
+
+                            if (inst is PhiInst) {
+                                var i = 1
+                                var block = path[index].inst.parent
+                                while (block == inst.parent) {
+                                    block = path[index - i].inst.parent
+                                    i++
+                                }
+                                builder.replacePhi(inst, block)
+                            } else {
+                                builder.buildInst(v.inst)
+                            }
+                        }
+                }
+            }
+
+        }
+        return builder.apply()
+    }
+
     private fun getState(block: BasicBlock): PredicateState? {
         val psa = PredicateStateAnalysis(cm)
         val builder = psa.builder(block.parent)
@@ -368,7 +420,7 @@ class ConcolicChecker(
         log.debug("New trace: $ps")
 
         val psa = PredicateStateAnalysis(cm)
-        try {
+        //try {
             val checker = Checker(method, loader, psa)
             val result = checker.prepareAndCheck(ps)    //org/antlr/v4/codegen/target/SwiftTarget$SwiftStringRenderer::toString(java/lang/Object, java/lang/String, java/util/Locale): java/lang/String
 
@@ -388,11 +440,11 @@ class ConcolicChecker(
             if (buildState(method, resultingTrace).path.startsWith(path))
                 paths += path
             return resultingTrace
-        }
-        catch (t: Throwable) { // !NoClassDefFoundError, ExceptionInInitializerError
-            log.warn("An ${t.toString()} has occurred while analyzing method $method")
-            return null
-        }
+        //}
+//        catch (t: Throwable) { // !NoClassDefFoundError, ExceptionInInitializerError
+//            log.warn("An ${t.toString()} has occurred while analyzing method $method")
+//            return null
+//        }
     }
 
     private fun traceToSetVertex(graph: StaticGraph, trace: Trace): MutableSet<Vertex> {
@@ -477,6 +529,16 @@ class ConcolicChecker(
         return set
     }
 
+    private fun Instruction.isBranch(): Boolean = this is BranchInst || this is SwitchInst || this is TableSwitchInst
+    private fun Vertex.isBranch(): Boolean {
+        if (this is TerminateVert) {
+            if (this.inst.isBranch())
+                return true
+//            if (this.predecessors.any { it.inst.isBranch() }) return true
+            return false
+        } else return false
+    }
+
     private fun findMismatch(
         method: Method,
         graph: StaticGraph,
@@ -486,16 +548,6 @@ class ConcolicChecker(
         data class BlockWrapper(val block: BasicBlock?)
 
         fun BasicBlock.wrap() = BlockWrapper(this)
-
-        fun Instruction.isBranch(): Boolean = this is BranchInst || this is SwitchInst || this is TableSwitchInst
-        fun Vertex.isBranch(): Boolean {
-            if (this is TerminateVert) {
-                if (this.inst.isBranch())
-                    return true
-                this.predecessors.forEach { if (it.inst.isBranch()) return true }
-                return false
-            } else return false
-        }
 
         val methodStack = stackOf<Method>()
         val prevBlockStack = stackOf<BlockWrapper>()
@@ -849,7 +901,8 @@ class ConcolicChecker(
             log.info("CFGDS: Found a branch")
             val branch = found.inst.parent
 
-            val ps = getState(branch)
+            //val ps = getState(branch)
+            val ps = constructState(graph, found)
             found.tries++
 
             if (ps == null || ps.isEmpty) {

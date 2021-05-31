@@ -337,13 +337,13 @@ class StaticGraph(enterPoint: Method, target: Package) {
             if (vertex == this.root)
                 continue
 
-            //4 each vertex we generate a map containing shortest paths to all that lies above it
+            //4 each vertex we generate a map that contains shortest paths to all that lies above it
             val map = dijkstra(vertex)
             val uncoveredKeys = map.keys.filter { uncovered.contains(it) }.toMutableSet()
             uncoveredKeys.forEach { map.keys.remove(it) }
 
             map.keys.forEach {
-                if (it.uncoveredDistance >= map[it]!! && it.isBranch()) { //changed
+                if (it.uncoveredDistance >= map[it]!! && /*it.isBranch()*/ it.isBranchInst()) {
                     it.uncoveredDistance = map[it]!!
                     it.nearestUncovered = vertex
                 }
@@ -354,9 +354,10 @@ class StaticGraph(enterPoint: Method, target: Package) {
 
     private fun Instruction.isBranch(): Boolean = this is BranchInst || this is SwitchInst || this is TableSwitchInst
 
+    private fun Vertex.isBranchInst(): Boolean = this.inst.isBranch()
+
     private fun Vertex.isBranch(): Boolean {
-        if (this.inst.isBranch())
-            return true
+        //if(this.isBranchInst()) return true
         if (this.predecessors.any { it.inst.isBranch() }) return true
         return false
     }
@@ -419,20 +420,19 @@ class StaticGraph(enterPoint: Method, target: Package) {
     private fun findWithMinUD(failed: MutableSet<Vertex>): MutableSet<Vertex> {
         var result = mutableSetOf<Vertex>()
         var ud = Int.MAX_VALUE
-
         val covered = vertices.filter { it.isCovered && !failed.contains(it) }
 
         for (vertex in covered) {
             if (failed.contains(vertex))
                 continue
-            result = if (vertex.isBranch())
+            result = if (vertex.isBranchInst() /*vertex.isBranch()*/)
                 checkUD(result, vertex, ud)
             else
                 result
-
             if (result.isNotEmpty())
                 ud = result.first().uncoveredDistance
         }
+        result = result.filter{ it.uncoveredDistance < Int.MAX_VALUE/2 }.toMutableSet()
         return result
     }
 
@@ -499,6 +499,66 @@ class StaticGraph(enterPoint: Method, target: Package) {
             updatedPaths = findPathsDFS(successor, dist, newPath, updatedPaths)
         }
         return updatedPaths
+    }
+
+
+    /**
+     * We are moving higher from our purpose vertex to find a branch named $vertex successor that we should force
+     * */
+    private fun findSuccessor(vertex: Vertex): Vertex? {
+        var purpose = vertex.nearestUncovered?: return null
+        if(purpose in vertex.successors)
+            return purpose
+
+        var current = mutableSetOf(purpose)
+        var next = mutableSetOf<Vertex>()
+
+        while (current.isNotEmpty()) {
+            for(v in current) {
+                if (v.predecessors.contains(vertex)) {
+                    return v
+                }
+                if(v.predecessors.isNotEmpty())
+                    next.addAll(v.predecessors)
+            }
+            current = next
+            next = mutableSetOf()
+        }
+        return null
+    }
+
+    /**
+     * Is used to find a static path to the vertex we want to be forced
+     */
+    fun getPathToBranch(vertex: Vertex): MutableList<Vertex>? {
+        //vertex is a branchInst successor
+//        if(!vertex.isBranch())
+//            return null
+        val successor = findSuccessor(vertex)
+        if(successor == null){
+            log.warn("Graph: couldn't find a path to force $vertex")
+            return null
+        }
+
+        val result = mutableListOf(successor, vertex)
+
+        var current = vertex
+//        val branches = vertex.predecessors.filter { it.inst.isBranch() }
+//        if(branches.isEmpty())
+//            return null
+        if(vertex.predecessors.isEmpty())
+            return null
+        var next = vertex.predecessors.first()
+        while(true) {
+            current = next
+            result.add(current)
+            if(current.predecessors.isEmpty())
+                break
+            next = current.predecessors.first()
+
+        }
+        result.reverse()
+        return result
     }
 
     fun dropTries() = vertices.forEach { it.tries = 0 }
