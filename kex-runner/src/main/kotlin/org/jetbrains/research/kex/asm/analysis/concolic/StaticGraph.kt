@@ -219,8 +219,8 @@ class StaticGraph(enterPoint: Method, target: Package) {
                         val temp = currentBlock.instructions.filterIsInstance<CallInst>()
                         val vert = temp.find { it.method == action.method }?.find()
 
-                        if (vert != null && prevBlock != null && prevBlock.isNotEmpty &&
-                            prevBlock.terminator.isBranch() && !vert.isCovered
+                        if (vert != null /*&& prevBlock != null && prevBlock.isNotEmpty &&
+                        prevBlock.terminator.isBranch()*/&& vert.isBranch() && !vert.isCovered
                         ) {
                             newBranchCovered = true
                         }
@@ -240,8 +240,8 @@ class StaticGraph(enterPoint: Method, target: Package) {
                         continue
                     val vert = currentBlock.instructions.first().find()
 
-                    if (vert != null && prevBlock != null && prevBlock.isNotEmpty &&
-                        prevBlock.terminator.isBranch() && !vert.isCovered
+                    if (vert != null /*&& prevBlock != null && prevBlock.isNotEmpty &&
+                        prevBlock.terminator.isBranch()*/&& vert.isBranch() && !vert.isCovered
                     ) {
                         newBranchCovered = true
                     }
@@ -256,8 +256,8 @@ class StaticGraph(enterPoint: Method, target: Package) {
                     }
                     val vert = currentBlock.terminator.find()
 
-                    if (vert != null && prevBlock != null && prevBlock.isNotEmpty &&
-                        prevBlock.terminator.isBranch() && !vert.isCovered
+                    if (vert != null && /*prevBlock != null && prevBlock.isNotEmpty &&
+                        prevBlock.terminator.isBranch()*/vert.isBranch() && !vert.isCovered
                     ) {
                         newBranchCovered = true
                     }
@@ -273,12 +273,12 @@ class StaticGraph(enterPoint: Method, target: Package) {
                         vert.isCovered = true
                     }
 
-                    if (prevBlock != null && prevBlock.isNotEmpty &&
+                    /*if (prevBlock != null && prevBlock.isNotEmpty &&
                         prevBlock.terminator.isBranch() && !vert.isCovered
                     ) {
                         newBranchCovered = true
                         vert.isCovered = true
-                    }
+                    }*/
 
                     for (inst in currentBlock.instructions) {
                         inst.find()?.isCovered = true
@@ -294,12 +294,12 @@ class StaticGraph(enterPoint: Method, target: Package) {
                         vert.isCovered = true
                     }
 
-                    if (prevBlock != null && prevBlock.isNotEmpty &&
+                   /* if (prevBlock != null && prevBlock.isNotEmpty &&
                         prevBlock.terminator.isBranch() && !vert.isCovered
                     ) {
                         newBranchCovered = true
                         vert.isCovered = true
-                    }
+                    }*/
 
                     for (inst in currentBlock.instructions) {
                         inst.find()?.isCovered = true

@@ -306,20 +306,23 @@ class Kex(args: Array<String>) {
         val path = "${algorithm}/${`package`.name}"
         val file = File(dir, path)
 
-        statistics.start(file, true, algorithm, `package`)
+        statistics.start(file, true, algorithm, `package`, this.classManager)
 
+        statistics.measureOverallTime()
         runPipeline(analysisContext) {
             +ConcolicChecker(analysisContext, psa, traceManager, `package`)
             +cm
         }
+        statistics.stopTimeMeasurement()
+        statistics.log()
 
         val coverage = cm.totalCoverage
         log.info("Overall summary for ${cm.methodInfos.size} methods:\n" +
                 "body coverage: ${String.format("%.2f", coverage.bodyCoverage)}%\n" +
                 "full coverage: ${String.format("%.2f", coverage.fullCoverage)}%")
         DescriptorStatistics.printStatistics()
-        statistics.print()
-        statistics.log()
+//        statistics.print()
+//        statistics.log()
     }
 
     private fun <T> createCoverageCounter(cm: ClassManager, tm: TraceManager<T>) = when {

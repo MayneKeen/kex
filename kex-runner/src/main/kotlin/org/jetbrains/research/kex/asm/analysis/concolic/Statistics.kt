@@ -1,6 +1,14 @@
 package org.jetbrains.research.kex.asm.analysis.concolic
 
+import org.jetbrains.research.kex.asm.manager.isUnreachable
+import org.jetbrains.research.kex.asm.manager.originalBlock
+import org.jetbrains.research.kfg.ClassManager
+import org.jetbrains.research.kfg.Package
+import org.jetbrains.research.kfg.ir.BasicBlock
 import org.jetbrains.research.kfg.ir.Method
+import org.jetbrains.research.kfg.ir.value.instruction.BranchInst
+import org.jetbrains.research.kfg.ir.value.instruction.SwitchInst
+import org.jetbrains.research.kfg.ir.value.instruction.TableSwitchInst
 import org.jetbrains.research.kthelper.logging.log
 import java.io.File
 import java.io.IOException
@@ -8,320 +16,236 @@ import java.nio.file.Files
 import java.nio.file.StandardOpenOption
 import java.time.Duration
 import java.time.temporal.ChronoUnit
-import org.jetbrains.research.kfg.Package
-import kotlin.system.exitProcess
-import kotlin.time.milliseconds
 
 class Statistics private constructor() {
 
-    private fun Statistics.getMethodStats(/*algorithm: String,*/ method: Method): MethodStats {
-        var ms = methodHolder.find { it.method == method /*&& it.algorithm == algorithm */ }
-        return if (ms != null)
-            ms
-        else {
-            ms = MethodStats(/*algorithm,*/ method)
-            methodHolder += ms
-            ms
-        }
+    fun incrementSolverRequests() {
+        solverRequests++
+    }
+    fun incrementSatResults() {
+        satResults++
     }
 
-    /**
-     * Starts measuring one iteration time + iterations number  **/
-
-    fun startIterationTimeMeasurement(method: Method/*, algorithm: String*/) {
-        val ms = getMethodStats(method/*, algorithm*/)
-        ms.iterationsStart += System.currentTimeMillis()
+    fun startIterationTimeMeasurement() {
+        currentItStart = System.currentTimeMillis()
     }
 
-    /**
-     * Stops measuring one iteration time + iterations number  **/
-
-    fun stopIterationTimeMeasurement(method: Method/*, algorithm: String*/) {
-        val ms = getMethodStats(method/*, algorithm*/)
-
-        try {
-            val itStart = ms.iterationsStart[ms.itNumber]
-            ms.itDurations += Duration.of(System.currentTimeMillis() - itStart, ChronoUnit.MILLIS)
-        } catch (e: ArrayIndexOutOfBoundsException) {
-            log.debug(
-                "Statistics: an $e occurred while measuring iteration #${ms.itNumber} time," +
-                        " in ${method.name} Duration.ZERO recorded"
-            )
-            ms.itDurations += Duration.ZERO
-        }
-        ms.itNumber++
-        return
+    fun stopBranchSelectionMeasurement() {
+        branchSelDurations += Duration.of(System.currentTimeMillis() - currentItStart, ChronoUnit.MILLIS)
     }
 
-    /**
-     * Measuring branch selection time **/
+    //an iteration is failed if we havent process any trace /and got emptyTrace or null from execute() method
+    fun stopIterationTimeMeasurement(fail: Boolean) {
+        itDurations += Duration.of(System.currentTimeMillis() - currentItStart, ChronoUnit.MILLIS)
+        if(fail)
+            failedIterations += iteration
+        computeCoverageIncrease(fail)
 
-    fun stopBranchSelectionMeasurement(method: Method/*, algorithm: String*/) {
-        val ms = getMethodStats(method/*, algorithm*/)
-
-        try {
-            val itStart = ms.iterationsStart[ms.itNumber]
-            ms.branchSelectionDuration.add(Duration.of(
-                    System.currentTimeMillis() - itStart, ChronoUnit.MILLIS
-                )
-            )
-        } catch (e: ArrayIndexOutOfBoundsException) {
-            log.debug(
-                "Statistics: an $e occurred while measuring iteration #${ms.itNumber} time," +
-                        " in ${method.name}. Duration.ZERO recorded"
-            )
-            ms.branchSelectionDuration.add(Duration.ZERO)
-        }
-        return
+        iteration++
     }
 
-    /**
-     * Starts measuring elapsed time  **/
-    fun measureOverallTime(method: Method/*, algorithm: String*/) {
-        getMethodStats(method/*, algorithm*/).startTime = System.currentTimeMillis()
+    fun measureOverallTime() {
+        elapsedTime = System.currentTimeMillis()
     }
 
+    fun stopTimeMeasurement(/*fail: Boolean*/) {
+        elapsedTime = System.currentTimeMillis() - elapsedTime
+    }
     /**
-     * If fail==false: Stops measurement of elapsed time.
-     * Else: Stops all measurements**/
+    input: new bodyBlocks+catchBlocks, branches+catchBranches COUNTS covered
+    //////call in traceManager//////
+    computes !every! trace stats
+    not chained to algorithm iterations
+     */
+/*    fun computeCoveragePercentage(block: Int, branch: Int*//*, fail: Boolean*//*) {
+        coveredBlocks += block
+        coveredBranches += branch
 
-    fun stopTimeMeasurement(method: Method, fail: Boolean/*, algorithm: String*/) {
-        if (fail) {
-            stopBranchSelectionMeasurement(method)
-            stopIterationTimeMeasurement(method)
-        }
-        val ms = getMethodStats(method/*, algorithm*/)
-        ms.elapsedTime = Duration.of(System.currentTimeMillis() - ms.startTime, ChronoUnit.MILLIS)
+        val body = coveredBlocks.toDouble() / bodyBlocks
+        val br = coveredBranches.toDouble() / branches
+        addCoveragePercentage(body, br)
+    }
+    private fun addCoveragePercentage(body: Double, branch: Double) {
+        bodyCoveragePercentage += body * 100
+        branchCoveragePercentage += branch * 100
+    }
+    */
+    fun computeCoveragePercentage(block: Int, branch: Int/*, fail: Boolean*/) {
+        coveredBlocks += block
+        coveredBranches += branch
+
+        var blockPercentage = block.toDouble() / bodyBlocks
+        var branchPercentage = branch.toDouble() / branches
+
+        addCoveragePercentage(blockPercentage, branchPercentage)
     }
 
-    /**
-     * Incrementing number of solver requests  **/
-
-    fun incrementSolverRequests(method: Method/*, algorithm: String*/) {
-        getMethodStats(method/*, algorithm*/).solverCalls++
+    private fun addCoveragePercentage(body: Double, branch: Double) {
+        bodyCoveragePercentage.add((bodyCoveragePercentage.last() + body))
+        branchCoveragePercentage.add((branchCoveragePercentage.last() + branch))
     }
 
-    /**
-     * Setting total coverage + total branch coverage  **/
+    //should be called only after successful algorithm iteration -- it has processed a trace, no matter what
+    //chained to iterations
+    //adds -noChanges- if fail
 
-    fun updateMethodCoverage(method: Method) {
-        val ms = getMethodStats(method/*, algorithm*/)
-        if (ms.fullBranchCoverage.isEmpty() || ms.fullBranchCoverage.isEmpty())
+    fun computeCoverageIncrease(fail: Boolean) {
+        if(fail) {
+            addCoverageIncrease(0.toDouble(), 0.toDouble())
             return
-        ms.bodyFull = ms.fullBodyCoverage.last()
-        ms.branchFull = ms.fullBranchCoverage.last()
-    }
-
-    /**
-     * Measuring average project coverage  **/
-    fun countAvgCoverage() {
-        var coverage = 0.0
-        var branchCoverage = 0.0
-        methodHolder.forEach {
-            coverage += it.bodyFull
-            branchCoverage += it.branchFull
         }
+        val currBody = bodyCoveragePercentage.last()
+        val currBranch = branchCoveragePercentage.last()
 
-        avgCoverage = coverage / methodHolder.size
-        avgBranchCoverage = branchCoverage / methodHolder.size
+        val lastBody = bodyCoveragePercentage[bodyCoveragePercentage.size - 2]
+        val lastBranch = branchCoveragePercentage[branchCoveragePercentage.size - 2]
+
+        addCoverageIncrease(currBody - lastBody, currBranch - lastBranch)
+        return
     }
 
-    /**
-     * Collecting dynamic body/full coverage stats **/
-
-    fun addIterationBodyCoverage(method: Method/*, algorithm: String*/, body: Double, full: Double) {
-        val ms = getMethodStats(method/*, algorithm*/)
-        ms.bodyCoverage.add(body)
-        ms.fullBodyCoverage.add(full)
-        /*if (ms.isEmpty() || ms.branchCoverage.isEmpty() || ms.fullBranchCoverage.isEmpty())
-            return*/
-        updateMethodCoverage(method)
+    private fun addCoverageIncrease(body: Double, branch: Double) {
+        bodyCoverageIncrease += body
+        branchCoverageIncrease += branch
     }
 
-    /**
-     * Collecting dynamic branch/branchFull coverage stats **/
+    //%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    //printing
 
-    fun addIterationBranchCoverage(method: Method/*, algorithm: String*/, branch: Double, branchFull: Double) {
-        val ms = getMethodStats(method/*, algorithm*/)
-        ms.branchCoverage.add(branch)
-        ms.fullBranchCoverage.add(branchFull)
-        /*if (ms.isEmpty() || ms.branchCoverage.isEmpty() || ms.fullBranchCoverage.isEmpty())
-            return*/
-        updateMethodCoverage(method)
+    //overall
+    fun avgIterationTime(): Long = itDurations.map{ it.toMillis() }.sum() / itDurations.size
+    //successful
+    fun avgSuccessfulIterationTime(): Long {
+        val succeed = itDurations.filter { itDurations.indexOf(it) !in failedIterations }.map{ it.toMillis() }
+        return succeed.sum() / succeed.size
     }
 
-    private fun MethodStats.avgBranchSelectionTime(): Long {
-        if (branchSelectionDuration.isEmpty())
-            return 0.0.toLong()
-        var sum = 0.0.toLong()
-        var count = 0
-        branchSelectionDuration.forEach {
-            if(it.toMillis() > 0.0.toLong()){
-                sum += it.toMillis()
-                count++
-            }
-        }
-        return if(count > 0 && sum > 0)
-            sum / count
-        else 0.toLong()
+    fun avgBranchSelectionTime(): Long {
+        val successful = branchSelDurations.filter {
+            branchSelDurations.indexOf(it) !in failedIterations }.map{ it.toMillis() }
+        if(successful.isEmpty())
+            return 0.toLong()
+        return successful.sum() / successful.size
     }
 
-    private fun MethodStats.getIterationsCoverage(): String {
+    private fun avgCoverageIncrease(): String {
+        val avgBody = bodyCoverageIncrease.sum() / bodyCoverageIncrease.size * 100
+        val avgBranch = branchCoverageIncrease.sum() / branchCoverageIncrease.size * 100
+        val successBodyList = bodyCoverageIncrease.filterNot { bodyCoverageIncrease.indexOf(it) in failedIterations}
+        val successBranchList = branchCoverageIncrease.filterNot { branchCoverageIncrease.indexOf(it) in failedIterations}
+        val avgSuccessBody = successBodyList.sum() * 100 / successBodyList.size
+        val avgSuccessBranch = successBranchList.sum() * 100 / successBranchList.size
+
         val sb = StringBuilder()
-
-        val itDurations = this.itDurations.map { it.toMillis() }
-
-        sb.append(" iteration durations: ${itDurations.toString()} \n")
-        sb.append(" body coverage by iterations: ${this.bodyCoverage.toString()} \n" )
-        sb.append(" full body coverage by iterations: ${this.fullBodyCoverage.toString()}\n")
-        sb.append(" branch coverage by iterations: ${this.branchCoverage.toString()}\n")
-        sb.append(" full branch coverage by iterations: ${this.fullBranchCoverage.toString()}\n")
-
+        sb.append("     average body coverage increase = $avgBody\n")
+        sb.append("     average branch coverage increase = $avgBranch\n")
+        sb.append("     average body coverage increase (successful iterations) = $avgSuccessBody\n")
+        sb.append("     average branch coverage increase (successful iterations) = $avgSuccessBranch\n")
         return sb.toString()
     }
 
-    fun setOtherMethodCoverage(
-        method: Method, other: Method, body: Double, bodyFull: Double,
-        branch: Double, branchFull: Double
-    ) {
-        if (method == other) {
-            log.error(
-                "Statistics: setting other method coverage for method: ${method.name} " +
-                        "failed because other method is the same"
-            )
-            return
-        }
-
-        val ms = getMethodStats(method)
-        var otm = ms.otherMethodsInfo[other]
-        val notSet = otm == null
-        if (notSet)
-            otm = OtherMethodInfo(method, other)
-
-        otm!!.bodyCoverage.add(body)
-        otm.fullBodyCoverage.add(bodyFull)
-        otm.branchCoverage.add(branch)
-        otm.fullBranchCoverage.add(branchFull)
-        otm.itNumber++
-
-        if (notSet)
-            ms.otherMethodsInfo[other] = otm
-        return
-    }
-
-    /**
-     * Printing Statistics**/
-    fun print() {
-        println(this.toString())
-        return
-    }
-
-    /**
-     * Printing Statistics by method**/
-    fun print(method: Method) {
-        val str = getStatsString(method)
-        println(str)
-        return
-    }
-
-    fun log() {
-        if (logFile != null) {
-            try {
-                val writer = Files.newBufferedWriter(logFile!!.toPath(), StandardOpenOption.APPEND)
-                writer.write(this.toString())
-                writer.newLine()
-                methodHolder.forEach{
-                    writer.write("Method ${it.method.name} stats: ")
-                    writer.newLine()
-                    writer.write(it.getIterationsCoverage())
-                    writer.newLine()
-                }
-                writer.flush()
-                writer.close()
-            } catch (e: IOException) {
-                log.warn("IOException $e occurred while writing statistics to log file.")
-            }
-        } else {
-            log.debug(this.toString())
-        }
+    private fun totalCoverage(): String {
+        val body = bodyCoveragePercentage.last()*100
+        val branch = branchCoveragePercentage.last()*100
+        return "    full = $body    \nbranch = $branch"
     }
 
     override fun toString(): String {
-        var iterations = 0
-        var elapsedTime = 0.toLong()
-        var bodyCoverage = 0.toDouble()
-        var branchCoverage = 0.toDouble()
-        var calls = 0
-        var branchSelection = 0.toLong()
-        var div = methodHolder.size
-        var count = 0
-
-        for(ms in methodHolder) {
-            iterations += ms.itNumber
-            elapsedTime += ms.elapsedTime.toMillis()
-            bodyCoverage += ms.bodyFull
-            branchCoverage += ms.branchFull
-            calls += ms.solverCalls
-
-            val avg = ms.avgBranchSelectionTime()
-            if(avg > 0) {
-                count++
-                branchSelection += avg
-            }
-            for(other in ms.otherMethodsInfo.keys) {
-                if(methodHolder.any { it.method == other }) {
-                    continue
-                }
-                val otm = ms.otherMethodsInfo[other]!!
-                if(otm.fullBodyCoverage.isNotEmpty() && otm.fullBranchCoverage.isNotEmpty()) {
-                    bodyCoverage += otm.fullBodyCoverage.last()
-                    branchCoverage += otm.fullBranchCoverage.last()
-                    div++
-                }
-            }
-        }
-
         val sb = StringBuilder()
-        sb.append("Overall statistics: \n")
-        sb.append("     number of methods: ${methodHolder.size}\n")
-        sb.append("     number of iterations: ${iterations}\n")
-        sb.append("     elapsed time: ${elapsedTime} ms\n")
-        sb.append("     avg body coverage: ${bodyCoverage / div}\n")
-        sb.append("     avg branch coverage: ${branchCoverage / div}\n")
-        sb.append("     total solver calls: ${calls}\n")
-        sb.append("     avg branch selection time: ${branchSelection / count} ms\n")
+        sb.append("Overall statistics:")
+        sb.append("\n")
+        sb.append(" elapsed time = $elapsedTime")
+        sb.append("\n")
+        sb.append(" number of iterations = $iteration")
+        sb.append("\n")
+        sb.append(" total coverage :\n ${totalCoverage()}")
+        sb.append("\n")
+        sb.append(" total solver requests = $solverRequests")
+        sb.append("\n")
+        sb.append(" sat results = $satResults")
+        sb.append("\n")
+        sb.append(" avg iteration time = ${avgIterationTime()}")
+        sb.append("\n")
+        sb.append(" avg successful iteration time = ${avgSuccessfulIterationTime()}")
+        sb.append("\n")
+        sb.append(" avg branch selection time = ${avgBranchSelectionTime()}")
+        sb.append("\n")
+        sb.append(" coverage increase : ${avgCoverageIncrease()}")
+        sb.append("\n")
+        sb.append(" covered branches: $coveredBranches / total : $branches\n")
+        sb.append(" covered blocks: $coveredBlocks / total : $bodyBlocks\n")
+        sb.append(" body coverage: $bodyCoveragePercentage\n")
+        sb.append(" branch coverage: $branchCoveragePercentage\n")
+        sb.append(" body coverage inc : $bodyCoverageIncrease\n")
+        sb.append(" branch coverage inc : $branchCoverageIncrease\n")
+
         return sb.toString()
     }
 
-    private fun getStatsString(method: Method): String {
-        val ms = getMethodStats(method)
-        if (ms.isEmpty()) {
-            return "Statistics: no results for method ${method.name}"
-        }
-
-        val listMethods = mutableListOf<String>()
-        for (m in ms.otherMethodsInfo.keys)
-            listMethods.add(m.name + " coverage is: ${ms.otherMethodsInfo[m].toString()} \n")
-
-        val sb = StringBuilder()
-        sb.append("Method ${method.name} statistics: \n")
-        sb.append("     number of iterations: ${ms.itNumber}\n")
-        sb.append("     elapsed time: ${ms.elapsedTime.toMillis()}\n")
-        sb.append("     full body coverage: ${ms.bodyFull}\n")
-        sb.append("     full branch coverage: ${ms.branchFull}\n")
-        sb.append("     total solver calls: ${ms.solverCalls}\n")
-        sb.append("     average branch selection time millis: ${ms.avgBranchSelectionTime()}\n")
-        sb.append("     following methods were called: ${listMethods.toString()}")
-        return sb.toString()
+    fun print() {
+        log.debug(this.toString())
     }
 
-    fun start(file: File, createNew: Boolean, alg: String, pkg: Package) {
-        setLoggingFile(file, createNew)
+    fun log() {
+        val str = this.toString()
+        if (logFile != null) {
+            try {
+                val writer = Files.newBufferedWriter(logFile!!.toPath(), StandardOpenOption.APPEND)
+                //writer.newLine()
+                writer.write(str)
+                writer.newLine()
+                writer.flush()
+                writer.close()
+            }
+            catch (e: IOException) {
+                log.warn("IOException $e occurred while writing statistics to log file.")
+            }
+        }
+        log.debug(str)
+    }
+
+    //%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    //init
+
+    fun start(file: File, createNew: Boolean, alg: String, pkg: Package, cm: ClassManager) {
         setAlg(alg)
         setPkg(pkg)
+        setLoggingFile(file, createNew)
+        initCoverageParams(cm)
     }
 
+    private fun initCoverageParams(cm: ClassManager) {
+        classManager = cm
+        val allMethods = mutableSetOf<Method>()
 
+        fun Method.isInteresting() = when {
+            this.isAbstract -> false
+            this.isStaticInitializer -> false
+            this.`class`.isSynthetic -> false
+            this.isSynthetic -> false
+            !this.hasBody -> false
+            else -> true
+        }
+        cm.concreteClasses.filter { target!!.isParent(it.`package`) }.forEach {
+            allMethods.addAll(it.allMethods)
+        }
+
+        methods = allMethods.filter { it.isInteresting() }.toMutableSet()
+
+        var blockSet = mutableSetOf<BasicBlock>()
+        for (m in methods) {
+            blockSet.addAll(m.bodyBlocks.filterNot { it.isUnreachable }.map { it.originalBlock })
+            blockSet.addAll(m.catchBlocks.filterNot { it.isUnreachable }.map { it.originalBlock })
+        }
+
+        val branchSet = mutableSetOf<BasicBlock>()
+        blockSet.toSet().forEach{ if(it.terminator is BranchInst || it.terminator is SwitchInst || it.terminator is TableSwitchInst)
+            branchSet.addAll(it.successors) }
+
+        bodyBlocks = blockSet.toSet().size
+        branches = branchSet.toSet().size
+        return
+    }
 
     private fun setLoggingFile(file: File, createNew: Boolean) {
         logFile = file
@@ -337,7 +261,7 @@ class Statistics private constructor() {
             log.info("Stats will be here: " + newFile.path.toString())
 
             val writer = Files.newBufferedWriter(newFile.toPath(), StandardOpenOption.WRITE)
-            writer.write("algorithm: $algorithm, target: ${target?.name}")
+            writer.write("algorithm: ${algorithm}, target: ${target?.name}")
             writer.newLine()
             writer.flush()
             writer.close()
@@ -353,6 +277,7 @@ class Statistics private constructor() {
         target = pkg
     }
 
+
     companion object {
         private var instance: Statistics? = null
         operator fun invoke(): Statistics = synchronized(this) {
@@ -360,109 +285,43 @@ class Statistics private constructor() {
                 instance = Statistics()
             instance!!
         }
+        var methods = mutableSetOf<Method>()
 
-        val methodHolder = mutableSetOf<MethodStats>()
-        var avgCoverage = 0.0
-        var avgBranchCoverage = 0.0
+        var classManager: ClassManager? = null
+
+        var bodyBlocks = 0
+        var branches = 0
+
+        var coveredBlocks = 0
+        var coveredBranches = 0
+
+        var iteration = 0
+        var currentItStart = 0.toLong()
+
+
+        val bodyCoveragePercentage = mutableListOf(0.toDouble())
+        val branchCoveragePercentage = mutableListOf(0.toDouble())
+
+        val bodyCoverageIncrease = mutableListOf<Double>()            //chained to iteration numbers ++ add -nochanges- if fail
+        val branchCoverageIncrease = mutableListOf<Double>()
+
+        var elapsedTime = 0.toLong()
+
+
+        var solverRequests = 0
+        var satResults = 0
+
+        val failedIterations = mutableListOf<Int>()
+        val itDurations = mutableListOf<Duration>()
+        val branchSelDurations = mutableListOf<Duration>()
 
 
         var algorithm = ""
         var target: Package? = null
         var logFile: File? = null
     }
-}
 
-data class OtherMethodInfo(
-    val method: Method,
-    val other: Method
-) {
-    var itNumber = 0
-
-    val bodyCoverage = mutableListOf<Double>()
-    val branchCoverage = mutableListOf<Double>()
-
-    val fullBodyCoverage = mutableListOf<Double>()
-    val fullBranchCoverage = mutableListOf<Double>()
-
-    override fun equals(other: Any?): Boolean {
-        return if (other is OtherMethodInfo)
-            this.method == other.method && this.other == other.other && this.itNumber == other.itNumber &&
-                    this.bodyCoverage == other.bodyCoverage && this.branchCoverage == other.branchCoverage &&
-                    this.fullBodyCoverage == other.fullBodyCoverage && this.fullBranchCoverage == other.fullBranchCoverage
-        else false
-    }
-
-    override fun hashCode(): Int {
-        return super.hashCode() + method.hashCode() + other.hashCode()
-    }
-
-    override fun toString(): String {
-        val sb = StringBuilder()
-        if (fullBodyCoverage.isNotEmpty())
-            sb.append("\n       body " + fullBodyCoverage.last() + "\n")
-        if (fullBranchCoverage.isNotEmpty())
-            sb.append("       branch: " + fullBranchCoverage.last() + "\n")
-        return sb.toString()
-    }
-}
-
-data class MethodStats(//val algorithm: String,
-    val method: Method
-) {
-    //number of current iteration
-    //after execution here we should have total amount of iterations
-    var itNumber = 0
-
-    //start in milliseconds for each iteration while testing the method
-    val iterationsStart = mutableListOf<Long>()
-
-    //start in milliseconds for each iteration while testing the method
-    val itDurations = mutableListOf<Duration>()
-
-
-    //method analysis start time
-    var startTime = 0.toLong()
-
-    //method analysis end time
-    var elapsedTime = Duration.ZERO!!
-
-    //avg method coverage
-    var bodyFull = 0.0
-    var branchFull = 0.0
-
-    var solverCalls = 0
-    var branchSelectionDuration = mutableListOf<Duration>()
-
-    val bodyCoverage = mutableListOf<Double>()
-    val branchCoverage = mutableListOf<Double>()
-
-    val fullBodyCoverage = mutableListOf<Double>()
-    val fullBranchCoverage = mutableListOf<Double>()
-
-    //otherMethod :: info
-    val otherMethodsInfo = mutableMapOf<Method, OtherMethodInfo>()
-
-
-    fun isEmpty() = itNumber == 0 && bodyCoverage.isEmpty() && branchCoverage.isEmpty() &&
-            fullBodyCoverage.isEmpty() && fullBranchCoverage.isEmpty() && solverCalls == 0 && otherMethodsInfo.isEmpty()
-
-    fun isNotEmpty() = !this.isEmpty()
-
-    override fun hashCode() = super.hashCode() /*+ algorithm.hashCode()*/ + method.hashCode() + startTime.hashCode()
-
-    override fun toString(): String {
-        return super.toString()
-    }
-
-    override fun equals(other: Any?) =
-        if (other is MethodStats)
-        /*this.algorithm == other.algorithm &&*/ this.method == other.method && super.equals(other)
-//                    &&
-//                    this.itNumber == other.itNumber && this.itDurations == other.itDurations &&
-//                    this.startTime == other.startTime && this.elapsedTime == other.elapsedTime &&
-//                    this.totalCoverage == other.totalCoverage && this.totalBranchCoverage == other.totalBranchCoverage &&
-//                    this. branchSelectionDuration == other.branchSelectionDuration && this.solverCalls == other.solverCalls
-        else false
-
-
+    fun getCM() = classManager
+    fun getTarget() = target
+    fun getMethods() = methods.toSet()
 }
