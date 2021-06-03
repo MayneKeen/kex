@@ -74,15 +74,15 @@ class Statistics private constructor() {
         coveredBlocks += block
         coveredBranches += branch
 
-        var blockPercentage = block.toDouble() / bodyBlocks
-        var branchPercentage = branch.toDouble() / branches
+        val blockPercentage = coveredBlocks.toDouble() / bodyBlocks
+        val branchPercentage = coveredBranches.toDouble() / branches
 
         addCoveragePercentage(blockPercentage, branchPercentage)
     }
 
     private fun addCoveragePercentage(body: Double, branch: Double) {
-        bodyCoveragePercentage.add((bodyCoveragePercentage.last() + body))
-        branchCoveragePercentage.add((branchCoveragePercentage.last() + branch))
+        bodyCoveragePercentage.add(body)
+        branchCoveragePercentage.add(branch)
     }
 
     //should be called only after successful algorithm iteration -- it has processed a trace, no matter what
@@ -109,6 +109,13 @@ class Statistics private constructor() {
         branchCoverageIncrease += branch
     }
 
+    fun addUnreachable(blocks: Int, branches: Int, method: Method) {
+        if(method in getMethods()) {
+            unreachableBlocks += blocks
+            unreachableBranches += branches
+        }
+    }
+
     //%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     //printing
 
@@ -129,18 +136,18 @@ class Statistics private constructor() {
     }
 
     private fun avgCoverageIncrease(): String {
-        val avgBody = bodyCoverageIncrease.sum() / bodyCoverageIncrease.size * 100
-        val avgBranch = branchCoverageIncrease.sum() / branchCoverageIncrease.size * 100
+        val avgBody = bodyCoverageIncrease.sum() / bodyCoverageIncrease.size
+        val avgBranch = branchCoverageIncrease.sum() / branchCoverageIncrease.size
         val successBodyList = bodyCoverageIncrease.filterNot { bodyCoverageIncrease.indexOf(it) in failedIterations}
         val successBranchList = branchCoverageIncrease.filterNot { branchCoverageIncrease.indexOf(it) in failedIterations}
-        val avgSuccessBody = successBodyList.sum() * 100 / successBodyList.size
-        val avgSuccessBranch = successBranchList.sum() * 100 / successBranchList.size
+        val avgSuccessBody = successBodyList.sum()  / successBodyList.size
+        val avgSuccessBranch = successBranchList.sum()  / successBranchList.size
 
         val sb = StringBuilder()
-        sb.append("     average body coverage increase = $avgBody\n")
-        sb.append("     average branch coverage increase = $avgBranch\n")
-        sb.append("     average body coverage increase (successful iterations) = $avgSuccessBody\n")
-        sb.append("     average branch coverage increase (successful iterations) = $avgSuccessBranch\n")
+        sb.append("     average body coverage increase = ${avgBody* 100}\n")
+        sb.append("     average branch coverage increase = ${avgBranch* 100}\n")
+        sb.append("     average body coverage increase (successful iterations) = ${avgSuccessBody* 100}\n")
+        sb.append("     average branch coverage increase (successful iterations) = ${avgSuccessBranch* 100}\n")
         return sb.toString()
     }
 
@@ -172,10 +179,18 @@ class Statistics private constructor() {
         sb.append("\n")
         sb.append(" coverage increase : ${avgCoverageIncrease()}")
         sb.append("\n")
-        sb.append(" covered branches: $coveredBranches / total : $branches\n")
-        sb.append(" covered blocks: $coveredBlocks / total : $bodyBlocks\n")
-        sb.append(" body coverage: $bodyCoveragePercentage\n")
-        sb.append(" branch coverage: $branchCoveragePercentage\n")
+
+        sb.append(" covered branches: $coveredBranches || total : $branches \n")
+        sb.append("     unreachable : $unreachableBranches\n")
+
+        sb.append(" covered blocks: $coveredBlocks || total : $bodyBlocks\n")
+        sb.append("     unreachable : $unreachableBlocks\n")
+
+        sb.append(" body coverage: $bodyCoveragePercentage%\n")
+        sb.append("     unreachable percentage : ${(unreachableBlocks*100).toDouble() / bodyBlocks}%\n")
+        sb.append(" branch coverage: $branchCoveragePercentage%\n")
+        sb.append("     unreachable percentage : ${(unreachableBranches*100).toDouble() / branches}%\n")
+
         sb.append(" body coverage inc : $bodyCoverageIncrease\n")
         sb.append(" branch coverage inc : $branchCoverageIncrease\n")
 
@@ -294,6 +309,9 @@ class Statistics private constructor() {
 
         var coveredBlocks = 0
         var coveredBranches = 0
+
+        var unreachableBlocks = 0
+        var unreachableBranches = 0
 
         var iteration = 0
         var currentItStart = 0.toLong()

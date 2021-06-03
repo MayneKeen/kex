@@ -446,7 +446,8 @@ class StaticGraph(enterPoint: Method, target: Package) {
     }
 
     suspend fun findPathsForSAP(curr: Vertex, ud: Int): MutableList<MutableList<Vertex>> {
-        val paths = findPathsDFS(curr, ud, mutableListOf(), mutableListOf())
+        val start = mutableListOf(curr)
+        val paths = findPathsDFS(curr, ud, start, mutableListOf(start))
 
         if (paths.isEmpty())
             return mutableListOf()
@@ -462,7 +463,7 @@ class StaticGraph(enterPoint: Method, target: Package) {
                     iterator.remove()
             }
         }
-        return if (paths.isEmpty())
+        return if (paths.isEmpty() || paths.count{it.size == 1} == paths.size)
             mutableListOf()
         else paths
     }
@@ -512,14 +513,16 @@ class StaticGraph(enterPoint: Method, target: Package) {
 
         var current = mutableSetOf(purpose)
         var next = mutableSetOf<Vertex>()
-
+        val visited = mutableSetOf<Vertex>()
         while (current.isNotEmpty()) {
+            current = current.filterNot { visited.contains(it) }.toMutableSet()
             for(v in current) {
                 if (v.predecessors.contains(vertex)) {
                     return v
                 }
                 if(v.predecessors.isNotEmpty())
                     next.addAll(v.predecessors)
+                visited.add(v)
             }
             current = next
             next = mutableSetOf()
@@ -546,9 +549,9 @@ class StaticGraph(enterPoint: Method, target: Package) {
 //        val branches = vertex.predecessors.filter { it.inst.isBranch() }
 //        if(branches.isEmpty())
 //            return null
-        if(vertex.predecessors.isEmpty())
+        if(current.predecessors.isEmpty())
             return null
-        var next = vertex.predecessors.first()
+        var next = current.predecessors.first()
         while(true) {
             current = next
             result.add(current)
@@ -560,6 +563,24 @@ class StaticGraph(enterPoint: Method, target: Package) {
         result.reverse()
         return result
     }
+
+    //should be called if we are not analyzing graph due to problems with random trace
+    fun countFullyUnreachable():Pair<Int, Int> {
+        val blockSet = mutableSetOf<BasicBlock>()
+        var blocks = 0
+        var branches = 0
+
+        vertices.forEach {
+            if(!it.isCovered && it.inst.parent !in blockSet) {
+                blockSet += it.inst.parent
+                blocks++
+            }
+            if(!it.isCovered && it.isBranch())
+                branches++
+        }
+        return Pair(blocks, branches)
+    }
+
 
     fun dropTries() = vertices.forEach { it.tries = 0 }
 

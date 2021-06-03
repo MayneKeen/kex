@@ -376,25 +376,36 @@ class ConcolicChecker(
                         builder.forceByType(v as TerminateVert, path)
                 }
                 else -> {
+
+                    //log.debug(v.inst.name.toString())
+                    log.debug(v.toString())
                     if (v.inst.isTerminate)
                         if (path.size > index + 1) {
                             val bb = path[index + 1].inst.parent
                             builder.buildTerminateInst(v.inst as TerminateInst, bb)
-                        } else {
-                            val inst = v.inst
-
-                            if (inst is PhiInst) {
-                                var i = 1
-                                var block = path[index].inst.parent
-                                while (block == inst.parent) {
-                                    block = path[index - i].inst.parent
-                                    i++
-                                }
-                                builder.replacePhi(inst, block)
-                            } else {
-                                builder.buildInst(v.inst)
-                            }
+                            continue
                         }
+
+                    if (path.size - 1 == index && v.inst.isTerminate) {
+                        builder.buildTerminateInst(v.inst as TerminateInst, null)
+                        continue
+                    } else {
+                        val inst = v.inst
+
+                        if (inst is PhiInst) {
+                            var i = 1
+                            var block = path[index].inst.parent
+                            while (block == inst.parent) {
+                                block = path[index - i].inst.parent
+                                i++
+                            }
+                            builder.replacePhi(inst, block)
+                            continue
+                        } else {
+                            builder.buildInst(v.inst)
+                            continue
+                        }
+                    }
                 }
             }
 
@@ -856,7 +867,7 @@ class ConcolicChecker(
             finish(graph, statistics)
             return
         }
-        graph.addTrace(lastTrace)
+        val branchCovered = graph.addTrace(lastTrace)
 
         val failedToForce = mutableSetOf<Vertex>()
         val failedPaths = mutableListOf<MutableList<Vertex>>()
@@ -865,6 +876,12 @@ class ConcolicChecker(
         while (true) {
             if (graph.isFullyCovered()) {
                 log.debug("CFGDS: Method ${graph.rootMethod.name} is fully covered")
+                break
+            }
+            if(!branchCovered) {
+                log.debug("CFGDS: No branches reachable in ${graph.rootMethod.name}")
+                val pair = graph.countFullyUnreachable()
+                statistics.addUnreachable(pair.first, pair.second, graph.rootMethod)
                 break
             }
             if (failedIterations > 20) {
@@ -922,8 +939,10 @@ class ConcolicChecker(
             val lastTraceVertices = traceToSetVertex(graph, lastTrace)
             val newBranchCovered = graph.addTrace(lastTrace)
 
-            if (!newBranchCovered)
+            if (!newBranchCovered) {
+                failedIterations++
                 log.debug("CFGDS: Processing a trace was successful, but no new branches are covered")
+            }
             else
                 failedIterations = 0
 
@@ -955,21 +974,23 @@ class ConcolicChecker(
             for (path in pathList) {
                 val trace = searchAlongPath(graph, lastTrace!!, path, statistics)
                 yield()
-                if (trace == null || trace.actions.isNullOrEmpty()) {
+                if (trace == null || trace.actions.isNullOrEmpty() && trace == lastTrace) {
                     log.debug("CFGDS: no trace received from SAP")
                     failedPaths.add(path)
                     continue
                 } else {
                     sapSucceed = true
-                    log.debug("CFGDS: SAP success")
+                    //log.debug("CFGDS: SAP success")
                     lastTrace = trace
                     break
                 }
             }
             if (!sapSucceed) {
                 found.tries++
-                if (!newBranchCovered)
+                if (!newBranchCovered) {
                     failedIterations++
+                    failedToForce.add(found)
+                }
 
                 log.debug("CFGDS: SAP failed")
                 fail = false /////////////////////////////
