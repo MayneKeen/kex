@@ -547,9 +547,7 @@ class StaticGraph(enterPoint: Method, target: Package) {
         val result = mutableListOf(successor, vertex)
 
         var current = vertex
-//        val branches = vertex.predecessors.filter { it.inst.isBranch() }
-//        if(branches.isEmpty())
-//            return null
+
         if(current.predecessors.isEmpty())
             return null
         var next = current.predecessors.first()
@@ -558,8 +556,14 @@ class StaticGraph(enterPoint: Method, target: Package) {
             result.add(current)
             if(current.predecessors.isEmpty())
                 break
-            next = current.predecessors.first()
-
+            for(pred in current.predecessors) {
+                if(result.contains(pred))
+                    continue
+                else
+                    next = pred
+            }
+            if(next == current)
+                return null
         }
         result.reverse()
         return result
