@@ -961,9 +961,11 @@ class ConcolicChecker(
             if (pathList.isEmpty()) {
                 log.debug("CFGDS: No paths found for SAP, continuing")
                 found.tries += 1
-                if (!newBranchCovered)
+                fail = if (!newBranchCovered) {
                     failedIterations++
-                fail = false /////////////////////////
+                    true /////////////////////////
+                } else
+                    false
                 statistics.stopIterationTimeMeasurement(fail)
                 continue
             }
@@ -990,10 +992,10 @@ class ConcolicChecker(
                 if (!newBranchCovered) {
                     failedIterations++
                     failedToForce.add(found)
+                    fail = true
+                    log.debug("CFGDS: SAP failed")
                 }
 
-                log.debug("CFGDS: SAP failed")
-                fail = false /////////////////////////////
                 statistics.stopIterationTimeMeasurement(fail)
                 continue
             } else {

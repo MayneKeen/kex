@@ -39,6 +39,7 @@ class Statistics private constructor() {
         itDurations += Duration.of(System.currentTimeMillis() - currentItStart, ChronoUnit.MILLIS)
         if(fail)
             failedIterations += iteration
+
         computeCoverageIncrease(fail)
 
         iteration++
@@ -77,12 +78,21 @@ class Statistics private constructor() {
         val blockPercentage = coveredBlocks.toDouble() / bodyBlocks
         val branchPercentage = coveredBranches.toDouble() / branches
 
+        increaseCurrentCoverage(block, branch)
+
         addCoveragePercentage(blockPercentage, branchPercentage)
+
     }
 
     private fun addCoveragePercentage(body: Double, branch: Double) {
         bodyCoveragePercentage.add(body)
         branchCoveragePercentage.add(branch)
+    }
+
+
+    private fun increaseCurrentCoverage(block: Int, branch: Int) {
+        currBodyIncr += block
+        currBranchIncr += branch
     }
 
     //should be called only after successful algorithm iteration -- it has processed a trace, no matter what
@@ -91,18 +101,27 @@ class Statistics private constructor() {
 
     fun computeCoverageIncrease(fail: Boolean) {
         if(fail) {
+            /*addCoverageIncrease(currBodyIncr.toDouble() / bodyBlocks,
+                currBranchIncr.toDouble() / branches)*/
+
             addCoverageIncrease(0.toDouble(), 0.toDouble())
+            currBodyIncr = 0
+            currBranchIncr = 0
             return
         }
-        val currBody = bodyCoveragePercentage.last()
-        val currBranch = branchCoveragePercentage.last()
+//        val currBody = bodyCoveragePercentage.last()
+//        val currBranch = branchCoveragePercentage.last()
+//
+//        val lastBody = bodyCoveragePercentage[bodyCoveragePercentage.size - 2]
+//        val lastBranch = branchCoveragePercentage[branchCoveragePercentage.size - 2]
 
-        val lastBody = bodyCoveragePercentage[bodyCoveragePercentage.size - 2]
-        val lastBranch = branchCoveragePercentage[branchCoveragePercentage.size - 2]
-
-        addCoverageIncrease(currBody - lastBody, currBranch - lastBranch)
+        addCoverageIncrease(currBodyIncr.toDouble() / bodyBlocks,
+            currBranchIncr.toDouble() / branches)
+        currBodyIncr = 0
+        currBranchIncr = 0
         return
     }
+
 
     private fun addCoverageIncrease(body: Double, branch: Double) {
         bodyCoverageIncrease += body
@@ -144,10 +163,10 @@ class Statistics private constructor() {
         val avgSuccessBranch = successBranchList.sum()  / successBranchList.size
 
         val sb = StringBuilder()
-        sb.append("     average body coverage increase = ${avgBody* 100}\n")
-        sb.append("     average branch coverage increase = ${avgBranch* 100}\n")
-        sb.append("     average body coverage increase (successful iterations) = ${avgSuccessBody* 100}\n")
-        sb.append("     average branch coverage increase (successful iterations) = ${avgSuccessBranch* 100}\n")
+        sb.append("     average body coverage increase = ${avgBody * 100}\n")
+        sb.append("     average branch coverage increase = ${avgBranch * 100}\n")
+        sb.append("     average body coverage increase (successful iterations) = ${avgSuccessBody * 100}\n")
+        sb.append("     average branch coverage increase (successful iterations) = ${avgSuccessBranch * 100}\n")
         return sb.toString()
     }
 
@@ -164,6 +183,8 @@ class Statistics private constructor() {
         sb.append(" elapsed time = $elapsedTime")
         sb.append("\n")
         sb.append(" number of iterations = $iteration")
+        sb.append("\n")
+        sb.append(" number of failed iterations = ${failedIterations.size}")
         sb.append("\n")
         sb.append(" total coverage :\n ${totalCoverage()}")
         sb.append("\n")
@@ -247,7 +268,7 @@ class Statistics private constructor() {
 
         methods = allMethods.filter { it.isInteresting() }.toMutableSet()
 
-        var blockSet = mutableSetOf<BasicBlock>()
+        val blockSet = mutableSetOf<BasicBlock>()
         for (m in methods) {
             blockSet.addAll(m.bodyBlocks.filterNot { it.isUnreachable }.map { it.originalBlock })
             blockSet.addAll(m.catchBlocks.filterNot { it.isUnreachable }.map { it.originalBlock })
@@ -256,6 +277,8 @@ class Statistics private constructor() {
         val branchSet = mutableSetOf<BasicBlock>()
         blockSet.toSet().forEach{ if(it.terminator is BranchInst || it.terminator is SwitchInst || it.terminator is TableSwitchInst)
             branchSet.addAll(it.successors) }
+
+        allBlocks = blockSet
 
         bodyBlocks = blockSet.toSet().size
         branches = branchSet.toSet().size
@@ -301,15 +324,13 @@ class Statistics private constructor() {
             instance!!
         }
         var methods = mutableSetOf<Method>()
-
+        var allBlocks = mutableSetOf<BasicBlock>()
         var classManager: ClassManager? = null
-
+        var elapsedTime = 0.toLong()
         var bodyBlocks = 0
         var branches = 0
-
         var coveredBlocks = 0
         var coveredBranches = 0
-
         var unreachableBlocks = 0
         var unreachableBranches = 0
 
@@ -319,19 +340,18 @@ class Statistics private constructor() {
 
         val bodyCoveragePercentage = mutableListOf(0.toDouble())
         val branchCoveragePercentage = mutableListOf(0.toDouble())
-
         val bodyCoverageIncrease = mutableListOf<Double>()            //chained to iteration numbers ++ add -nochanges- if fail
         val branchCoverageIncrease = mutableListOf<Double>()
-
-        var elapsedTime = 0.toLong()
-
-
-        var solverRequests = 0
-        var satResults = 0
 
         val failedIterations = mutableListOf<Int>()
         val itDurations = mutableListOf<Duration>()
         val branchSelDurations = mutableListOf<Duration>()
+        var solverRequests = 0
+        var satResults = 0
+
+        var currBodyIncr = 0
+        var currBranchIncr = 0
+
 
 
         var algorithm = ""
@@ -341,5 +361,8 @@ class Statistics private constructor() {
 
     fun getCM() = classManager
     fun getTarget() = target
+
+    fun inBlocks(bb: BasicBlock) = bb in allBlocks
+
     fun getMethods() = methods.toSet()
 }

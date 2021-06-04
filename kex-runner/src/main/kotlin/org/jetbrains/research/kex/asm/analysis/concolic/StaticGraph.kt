@@ -1,5 +1,6 @@
 package org.jetbrains.research.kex.asm.analysis.concolic
 
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.yield
 import org.jetbrains.research.kthelper.collection.queueOf
 import org.jetbrains.research.kthelper.logging.log
@@ -570,13 +571,15 @@ class StaticGraph(enterPoint: Method, target: Package) {
         var blocks = 0
         var branches = 0
 
+        val statistics = Statistics.invoke()
+
         vertices.forEach {
-            if(!it.isCovered && it.inst.parent !in blockSet) {
+            if(!it.isCovered && it.inst.parent !in blockSet && statistics.inBlocks(it.inst.parent)) {
                 blockSet += it.inst.parent
                 blocks++
+                if(it.isBranch())
+                    branches++
             }
-            if(!it.isCovered && it.isBranch())
-                branches++
         }
         return Pair(blocks, branches)
     }
