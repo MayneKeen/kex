@@ -702,10 +702,11 @@ class ConcolicChecker(
                     if (currentBlock.isEmpty)
                         log.debug("current block is empty")
 
-                    val vert = currentBlock.terminator.find()!!
+                    val vert = currentBlock.terminator.find()
 
-                    if (path.contains(vert)) {
-                        prevVert = vert
+                    if (path.contains(vert) || vert == null) {
+                        if(vert != null)
+                            prevVert = vert
                         val prevBlock = prevBlockStack.pop()
                         val current = action.block
                         val next = filteredTrace.getOrNull(index + 1) as? BlockAction
@@ -724,10 +725,11 @@ class ConcolicChecker(
                     if (currentBlock.isEmpty)
                         log.debug("current block is empty")
 
-                    val vert = currentBlock.terminator.find()!!
+                    val vert = currentBlock.terminator.find()
 
-                    if (path.contains(vert)) {
-                        prevVert = vert
+                    if (path.contains(vert) || vert == null) {
+                        if(vert != null)
+                            prevVert = vert
                         val prevBlock = prevBlockStack.pop()
                         val current = action.block
                         val next = filteredTrace.getOrNull(index + 1) as? BlockAction

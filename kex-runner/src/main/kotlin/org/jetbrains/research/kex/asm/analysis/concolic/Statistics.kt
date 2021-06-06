@@ -89,7 +89,6 @@ class Statistics private constructor() {
         branchCoveragePercentage.add(branch)
     }
 
-
     private fun increaseCurrentCoverage(block: Int, branch: Int) {
         currBodyIncr += block
         currBranchIncr += branch
@@ -109,11 +108,6 @@ class Statistics private constructor() {
             currBranchIncr = 0
             return
         }
-//        val currBody = bodyCoveragePercentage.last()
-//        val currBranch = branchCoveragePercentage.last()
-//
-//        val lastBody = bodyCoveragePercentage[bodyCoveragePercentage.size - 2]
-//        val lastBranch = branchCoveragePercentage[branchCoveragePercentage.size - 2]
 
         addCoverageIncrease(currBodyIncr.toDouble() / bodyBlocks,
             currBranchIncr.toDouble() / branches)
