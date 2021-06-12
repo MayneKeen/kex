@@ -58,19 +58,7 @@ class Statistics private constructor() {
     computes !every! trace stats
     not chained to algorithm iterations
      */
-/*    fun computeCoveragePercentage(block: Int, branch: Int*//*, fail: Boolean*//*) {
-        coveredBlocks += block
-        coveredBranches += branch
 
-        val body = coveredBlocks.toDouble() / bodyBlocks
-        val br = coveredBranches.toDouble() / branches
-        addCoveragePercentage(body, br)
-    }
-    private fun addCoveragePercentage(body: Double, branch: Double) {
-        bodyCoveragePercentage += body * 100
-        branchCoveragePercentage += branch * 100
-    }
-    */
     fun computeCoveragePercentage(block: Int, branch: Int/*, fail: Boolean*/) {
         coveredBlocks += block
         coveredBranches += branch
@@ -100,9 +88,6 @@ class Statistics private constructor() {
 
     fun computeCoverageIncrease(fail: Boolean) {
         if(fail) {
-            /*addCoverageIncrease(currBodyIncr.toDouble() / bodyBlocks,
-                currBranchIncr.toDouble() / branches)*/
-
             addCoverageIncrease(0.toDouble(), 0.toDouble())
             currBodyIncr = 0
             currBranchIncr = 0

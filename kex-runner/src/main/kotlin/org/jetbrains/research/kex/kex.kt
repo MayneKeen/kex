@@ -300,8 +300,8 @@ class Kex(args: Array<String>) {
         val cm = CoverageCounter(originalContext.cm, traceManager)
 
         val statistics = Statistics.invoke()
-        val algorithm = "cfgds"
-        val dir = File("results")
+        val algorithm = "cgs"
+        val dir = File("results-cgs")
         dir.mkdir()
         val path = "${algorithm}/${`package`.name}"
         val file = File(dir, path)

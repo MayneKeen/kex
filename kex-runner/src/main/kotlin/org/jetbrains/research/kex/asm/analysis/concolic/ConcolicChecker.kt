@@ -27,6 +27,7 @@ import org.jetbrains.research.kex.trace.`object`.*
 import org.jetbrains.research.kex.trace.runner.ObjectTracingRunner
 import org.jetbrains.research.kex.trace.runner.RandomObjectTracingRunner
 import org.jetbrains.research.kex.trace.runner.TimeoutException
+import org.jetbrains.research.kex.util.mergeTypes
 import org.jetbrains.research.kfg.ClassManager
 import org.jetbrains.research.kfg.Package
 import org.jetbrains.research.kfg.ir.BasicBlock
@@ -67,14 +68,16 @@ class ConcolicChecker(
         initializeGenerator(method)
         try {
             runBlocking {
-                val graph = if(method.hasBody) StaticGraph(method, target) else null
+                //val graph = if(method.hasBody) StaticGraph(method, target) else null
 
                 withTimeout(timeLimit) {
                     try {
+                        val statistics = Statistics.invoke()
                         //process(method)
-                        if(graph != null)
+                        /*if(graph != null)
                             processCFGDS(method, graph, target)
-                        else log.debug("Method $method has no body")
+                        else log.debug("Method $method has no body")*/
+                        processTree(method, statistics)
                     } catch (e: TimeoutException) {
                         log.debug("Timeout on running $method")
                     }
@@ -253,44 +256,91 @@ class ConcolicChecker(
         }
     }
 
-//    private suspend fun processTree(method: Method, statistics: Statistics) {
-//        var contextLevel = 1
-//        val contextCache = mutableSetOf<TraceGraph.Context>()
-//        val visitedBranches = mutableSetOf<TraceGraph.Branch>()
-//
-//        val startTrace: Trace = getRandomTrace(method)?.also { manager[method] = it } ?: return
-//        if (startTrace.actions.isEmpty()) return
-//        val traces = DominatorTraceGraph(startTrace)
-//
-//        while (!manager.isBodyCovered(method)) {
-//            statistics.iterations += 1
-//            var tb = traces.getTracesAndBranches().filter { it.second !in visitedBranches }
-//            while (tb.isEmpty()) {
-//                statistics.iterations += 1
-//                val randomTrace = getRandomTrace(method)?.also { manager[method] = it; } ?: return
-//                val randomBranch = TraceGraph.Branch(randomTrace.actions)
-//                tb = listOfNotNull(randomTrace to randomBranch).filter { it.second !in visitedBranches }
-//                yield()
-//            }
-//
-//            tb.asSequence()
-//                .filter { (_, branch) -> branch.context(contextLevel) !in contextCache }
-//                .forEach { (candidate, branch) ->
-//                    statistics.iterations += 1
-//                    run(method, candidate)?.also {
-//                        manager[method] = it
-//                        traces.addTrace(it)
-//                        statistics.satNum += 1
-//                    }
-//                    manager[method] = candidate
-//                    contextCache.add(branch.context(contextLevel))
-//                    visitedBranches.add(traces.toBranch(candidate))
-//                    yield()
-//                }
-//            contextLevel += 1
-//            yield()
-//        }
-//    }
+    private fun Method.countBranches(): Int {
+        var result = 0
+        return if(this.hasBody) {
+            this.bodyBlocks.forEach {
+                if (it.terminator.isBranch())
+                    result += it.successors.size
+            }
+            result
+        } else 0
+    }
+
+    private suspend fun processTree(method: Method, statistics: Statistics) {
+        var contextLevel = 1
+        val contextCache = mutableSetOf<TraceGraph.Context>()
+        val visitedBranches = mutableSetOf<TraceGraph.Branch>()
+
+        val startTrace: Trace = getRandomTraceUntilSuccess(method)?.also { manager[method] = it } ?: return
+        if (startTrace.actions.isEmpty()) {
+            if(method.hasBody)
+                statistics.addUnreachable(method.bodyBlocks.size, method.countBranches(), method)
+            return
+        }
+
+        val traces = DominatorTraceGraph(startTrace)
+        var failed = 0
+
+        while (!manager.isBodyCovered(method) && failed < 20) {
+
+            var tb = traces.getTracesAndBranches().filter { it.second !in visitedBranches }
+            while (tb.isEmpty()) {
+                val randomTrace = getRandomTraceUntilSuccess(method)?.also { manager[method] = it; } ?: return
+                val randomBranch = TraceGraph.Branch(randomTrace.actions)
+
+                tb = listOfNotNull(randomTrace to randomBranch).filter { it.second !in visitedBranches }
+
+                yield()
+            }
+            //failed = 0
+
+                tb.asSequence()
+                    .filter { (_, branch) -> branch.context(contextLevel) !in contextCache }
+                    .forEach { (candidate, branch) ->
+                        if(failed < 20) {
+                            statistics.startIterationTimeMeasurement()
+                            try {
+                                statistics.incrementSolverRequests()
+
+                                val t = run(method, candidate)
+                                if (t == null) {
+                                    statistics.stopBranchSelectionMeasurement()
+
+                                    manager[method] = candidate
+                                    contextCache.add(branch.context(contextLevel))
+                                    visitedBranches.add(traces.toBranch(candidate))
+                                    statistics.stopIterationTimeMeasurement(true)
+                                    failed++
+
+                                } else {
+                                    t.also {
+                                        statistics.incrementSatResults()
+                                        if (it.actions.isNotEmpty()) {
+                                            manager[method] = it
+                                            traces.addTrace(it)
+                                            statistics.stopBranchSelectionMeasurement()
+                                        } else
+                                            statistics.stopBranchSelectionMeasurement()
+                                    }
+                                    val empty = t.actions.isEmpty()
+                                    manager[method] = candidate
+                                    contextCache.add(branch.context(contextLevel))
+                                    visitedBranches.add(traces.toBranch(candidate))
+                                    statistics.stopIterationTimeMeasurement(empty)
+                                    if(empty) failed++ else failed = 0
+                                }
+                            } catch (e: TimeoutException) {
+                                statistics.stopIterationTimeMeasurement(true)
+                                throw e
+                            }
+                            yield()
+                        }
+                    }
+            contextLevel += 1
+            yield()
+        }
+    }
 
     private suspend fun getRandomTraceUntilSuccess(method: Method): Trace? {
         var trace: Trace? = null
@@ -336,14 +386,7 @@ class ConcolicChecker(
             return
         }
         val statistics = Statistics.invoke() // org.jetbrains.research.kex.asm.analysis.concolic.Statistics
-        /*val algorithm = "cfgds"
-        val path = "results/${algorithm}_${target.name}"
-        val file = File(path)
 
-        statistics.start(file, true, algorithm, target)*/
-        //statistics.measureOverallTime(method)
-
-//        val graph = StaticGraph(method, target)
         cfgds(graph, statistics)
 
         yield()
@@ -1010,7 +1053,6 @@ class ConcolicChecker(
             statistics.stopIterationTimeMeasurement(fail)
         }
 
-        //statistics.stopTimeMeasurement(graph.rootMethod, fail)
         finish(graph, statistics)
     }
 }
